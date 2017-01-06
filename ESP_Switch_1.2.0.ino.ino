@@ -19,40 +19,44 @@ WiFiManager wifiManager;
 WiFiClient client;
 PubSubClient mqClient(client);
 
-String content;
 
 //Vcc measurement
 ADC_MODE(ADC_VCC);
 
 //APP
-String FIRM_VER = "1.1.2";
+String FIRM_VER = "1.2.8";
 String SENSOR = "PIR"; //BMP180, HTU21, DHT11
 
 String app_id;
 float vcc;
+String espIp;
+String apSsid;
+int rssi;
+String ssid;
+
 
 //CONF
 String MODE = "AUTO";
 int timeOut = 5000;
 
 //mqtt config
-char mqttAddress[200] = "http:mymqtt.com";
-int mqttPort = 13666;
+char mqttAddress[200] = "";
+int mqttPort = 1883;
 char mqttTopic[200] = "iot/sensor";
 
 //REST API CONFIG
-char rest_server[40];
+char rest_server[40] = "";
 boolean rest_ssl = false;
-char rest_path[200];
-int rest_port;
-char api_token[100];
-char api_payload[400];
+char rest_path[200]  = "";
+int rest_port = 80;
+char api_token[100] = "";
+char api_payload[400] = "";
 
 boolean buttonPressed = false;
+boolean requestSent = false;
 int lastTime = millis();
 
-StaticJsonBuffer<500> jsonBuffer;
-
+//StaticJsonBuffer<500> jsonBuffer;
 
 int BUILTINLED = 13;
 int RELEY = 12;
@@ -77,6 +81,10 @@ void setup() { //------------------------------------------------
 
   blink(1, 500);
   //dht.begin();
+
+  app_id = "ESP" + getMac();
+  Serial.print(F("**App ID: "));
+  Serial.println(app_id);
 
   //clean FS, for testing
   //SPIFFS.format();
@@ -149,11 +157,10 @@ void setup() { //------------------------------------------------
   }
   //end read
 
-  //fetches ssid and pass and tries to connect
-  //if it does not connect it starts an access point with the specified name
-  //here  "AutoConnectAP"
-  //and goes into a blocking loop awaiting configuration
-  if (!wifiManager.autoConnect("ESP_config", "espjezakon")) {
+  wifiManager.setConfigPortalTimeout(180);
+  wifiManager.setAPCallback(configModeCallback);
+  apSsid = "Config_" + app_id;
+  if (!wifiManager.autoConnect(apSsid.c_str())) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
@@ -161,32 +168,63 @@ void setup() { //------------------------------------------------
     delay(5000);
   }
 
-  //if you get here you have connected to the WiFi
-  Serial.println("connected...");
+  ssid = WiFi.SSID();
+  Serial.print("\nconnected to ");
+  Serial.print(ssid);
+  Serial.print(" ");
+  Serial.println(rssi);
+
   blink(3, 500);
 
   pinMode(RELEY, OUTPUT);
-  pinMode(GPIO_IN, INPUT);
   pinMode(BUILTINLED, OUTPUT);
+  if (GPIO_IN < 100)
+    pinMode(GPIO_IN, INPUT);
+
 
   Serial.println(" ");
+  IPAddress ip = WiFi.localIP();
+  espIp = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
   Serial.print("local ip: ");
-  Serial.println(WiFi.localIP());
+  Serial.println(espIp);
 
   createWebServer();
 
   //MQTT
-  mqClient.setServer(mqttAddress, mqttPort);
-  mqClient.setCallback(mqCallback);
+  if (mqttAddress != "") {
+    mqClient.setServer(mqttAddress, mqttPort);
+    mqClient.setCallback(mqCallback);
+  }
 }
 
 //loop ----------------------------------------------------------
 void loop() {
-  delay(10);
+  delay(100);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\nreconecting ...");
+    if (!wifiManager.autoConnect(apSsid.c_str())) {
+      Serial.println("failed to connect and hit timeout");
+      delay(3000);
+      //reset and try again, or maybe put it to deep sleep
+      ESP.reset();
+      delay(5000);
+    }
+
+  }
+
+  rssi = WiFi.RSSI();
+
   server.handleClient();
 
-  int inputState = digitalRead(GPIO_IN);
-  int buttonState = digitalRead(BUTTON);
+  int inputState = LOW;
+  if (GPIO_IN < 100)
+    inputState = digitalRead(GPIO_IN);
+
+  int buttonState = HIGH;
+  if (BUTTON < 100)
+    buttonState = digitalRead(BUTTON);
+
   vcc = ESP.getVcc() / 1000.00;
 
   if (MODE == "AUTO") {
@@ -195,12 +233,21 @@ void loop() {
       digitalWrite(RELEY, HIGH);
       digitalWrite(BUILTINLED, LOW);
       Serial.print("O");
-      lastTime = millis();
+
       buttonPressed = false;
+      String sensorData = "";
+      if (!requestSent) {
+        sendRequest(sensorData);
+        requestSent = true;
+        Serial.print("\nFree heap: ");
+        Serial.println(ESP.getFreeHeap());
+      }
+      lastTime = millis();
     }
     if (millis() > lastTime + timeOut && !buttonPressed && inputState != HIGH) {
       digitalWrite(RELEY, LOW);
       digitalWrite(BUILTINLED, HIGH);
+      requestSent = false;
     }
   }
 
@@ -228,18 +275,14 @@ void loop() {
 void createWebServer()
 {
   Serial.println("Starting server...");
-  app_id = getMac();
-  Serial.print("App ID: ");
-  Serial.println(app_id);
-
   Serial.println("REST handlers init...");
   server.on("/", []() {
     blink();
-    IPAddress ip = WiFi.localIP();
-    String ipStr = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+    String content;
+
     content = "<!DOCTYPE HTML>\r\n<html>";
     content += "<h1>ESP web server</h1>";
-    content += "<p>IP: " + ipStr + "</p>";
+    content += "<p>IP: " + espIp + "</p>";
     content += "<p>MAC/AppId: " + app_id + "</p>";
     content += "<p>Version: " + FIRM_VER + "</p>";
     content += "<p>Voltage: " + String(vcc) + " V</p>";
@@ -249,7 +292,7 @@ void createWebServer()
 
   server.on("/switch/auto", []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["rc"] = 0;
     if (digitalRead(RELEY) == HIGH) {
@@ -267,7 +310,7 @@ void createWebServer()
 
   server.on("/switch/on", []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["rc"] = 0;
     root["status"] = "on";
@@ -281,7 +324,7 @@ void createWebServer()
 
   server.on("/switch/off", []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["rc"] = 0;
     root["status"] = "off";
@@ -295,7 +338,7 @@ void createWebServer()
 
   server.on("/switch/status", HTTP_GET, []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["rc"] = 0;
     root["mode"] = MODE;
@@ -310,14 +353,24 @@ void createWebServer()
     meta["version"] = FIRM_VER;
     meta["sensor"] = SENSOR;
     meta["voltage"] = vcc;
+
+    meta["ssid"] = ssid;
+    meta["rssi"] = rssi;
+    meta["freeHeap"] = ESP.getFreeHeap();
+
+
     String content;
     root.printTo(content);
     server.send(200, "application/json", content);
+
+    Serial.print("/switch/status: ");
+    root.printTo(Serial);
+
   });
 
   server.on("/update", HTTP_GET, []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
 
     root["url"] = "Enter url to bin file here and POST json object to ESP.";
@@ -329,7 +382,7 @@ void createWebServer()
 
   server.on("/update", HTTP_POST, []() {
     blink();
-    StaticJsonBuffer<200> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
     Serial.println("Updating firmware...");
     String message = "";
@@ -381,7 +434,7 @@ void createWebServer()
 
   server.on("/config", HTTP_GET, []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
 
     root["rc"] = 0;
@@ -458,13 +511,15 @@ void createWebServer()
     String content;
     root.printTo(content);
     server.send(200, "application/json", content);
-  });
 
-  //---------------------------------------------------------
+    if (mqttAddress != "") {
+      mqClient.setServer(mqttAddress, mqttPort);
+    }
+  });
 
   server.on("/reset", HTTP_DELETE, []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
 
     root["rc"] = 0;
@@ -474,6 +529,7 @@ void createWebServer()
     String content;
     root.printTo(content);
     server.send(200, "application/json", content);
+    delay(3000);
 
     //clean FS, for testing
     SPIFFS.format();
@@ -487,7 +543,7 @@ void createWebServer()
 
   server.on("/reset", HTTP_GET, []() {
     blink();
-    StaticJsonBuffer<500> jsonBuffer;
+    DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
 
     root["rc"] = 0;
@@ -507,70 +563,91 @@ void createWebServer()
 
 }//--
 
-//send request
-void sendRequest(float pre, float temp, float hum, String msg)
+//send request ---------------------------------------------------------
+void sendRequest(String sensorData)
 {
-  WiFiClientSecure client;
-  //WiFiClient client;
-  int i = 0;
-  String url = rest_path;
-  Serial.println("");
-  Serial.print("Connecting for request... ");
-  Serial.print(String(rest_server));
-  Serial.print(":");
-  Serial.print(String(rest_port));
-
-  while (!client.connect(rest_server, rest_port)) {
-    Serial.print("Try ");
-    Serial.print(i);
-
-    if (i == 4) {
-      blink(5, 20);
-      return;
-    }
-    i++;
-  }
-
-  Serial.print("POST data to URL: ");
-  Serial.println(url);
-
   String api_payload_s = String(api_payload);
   if (api_payload_s != "")
-    api_payload_s = api_payload_s + ",";
-  String data = "{" + api_payload_s + " \"sensor\":{\"sensor_type\":\"" + SENSOR +
-                "\", \"data\":{\"vcc\":" + String(vcc) +
-                ", \"event\":\"" + msg + "\"" +
-                ", \"temp\":" + String(temp) +
-                ", \"hum\":" + String(hum) +
-                ", \"ver\":\"" + FIRM_VER +
-                "\"}}}";
+    api_payload_s = api_payload_s + ", ";
+  if (sensorData != "")
+    sensorData = sensorData + ", ";
+  String data = "{" + api_payload_s + "\"sensor\":{\"sensor_type\":\"" + SENSOR +
+                "\", \"data\":{" + sensorData + "}" +
+                ", \"ver\":\"" + FIRM_VER + "\"" +
+                ", \"ip\":\"" + espIp + "\"" +
+                ", \"id\":\"" + app_id + "\"" +
+                ", \"vcc\":" + vcc +
+                "}}";
 
-  String req = String("POST ") + url + " HTTP/1.1\r\n" +
-               "Host: " + String(rest_server) + "\r\n" +
-               "User-Agent: ESP/1.0\r\n" +
-               "Content-Type: application/json\r\n" +
-               "Cache-Control: no-cache\r\n" +
-               "Sensor-Id: " + String(app_id) + "\r\n" +
-               "Token: " + String(api_token) + "\r\n" +
-               "Content-Type: application/x-www-form-urlencoded;\r\n" +
-               "Content-Length: " + data.length() + "\r\n" +
-               "\r\n" + data;
-  Serial.print("Request: ");
-  Serial.println(req);
-  client.print(req);
+  //REST request
+  if (String(rest_server) != "") {
+    WiFiClientSecure client;
+    //WiFiClient client;
+    int i = 0;
+    String url = rest_path;
+    Serial.println("");
+    Serial.print("Connecting for request... ");
+    Serial.print(String(rest_server));
+    Serial.print(":");
+    Serial.println(String(rest_port));
 
-  delay(100);
+    while (!client.connect(rest_server, rest_port)) {
+      Serial.print("Try ");
+      Serial.print(i);
+      Serial.print(" ... ");
 
-  Serial.println("Response: ");
-  while (client.available()) {
-    String line = client.readStringUntil('\r');
-    Serial.print(line);
+      if (i == 4) {
+        blink(5, 20);
+        Serial.println("");
+        return;
+      }
+      i++;
+    }
+
+    Serial.print("POST data to URL: ");
+    Serial.println(url);
+    delay(10);
+    String req = String("POST ") + url + " HTTP/1.1\r\n" +
+                 "Host: " + String(rest_server) + "\r\n" +
+                 "User-Agent: ESP/1.0\r\n" +
+                 "Content-Type: application/json\r\n" +
+                 "Cache-Control: no-cache\r\n" +
+                 "Sensor-Id: " + String(app_id) + "\r\n" +
+                 "Token: " + String(api_token) + "\r\n" +
+                 "Content-Type: application/x-www-form-urlencoded;\r\n" +
+                 "Content-Length: " + data.length() + "\r\n" +
+                 "\r\n" + data;
+    Serial.print("Request: ");
+    Serial.println(req);
+    client.print(req);
+
+    delay(100);
+
+    Serial.println("Response: ");
+    while (client.available()) {
+      String line = client.readStringUntil('\r');
+      Serial.print(line);
+    }
+
+    blink(2, 40);
+
+    Serial.println();
+    Serial.println("Connection closed");
+    req = "";
   }
 
-  blink(2, 40);
+  //MQTT publish
+  if (String(mqttAddress) != "") {
+    Serial.println();
+    Serial.println("MQTT publish...");
 
-  Serial.println();
-  Serial.println("Connection closed");
+    mqPublish(data);
+  }
+
+  api_payload_s = "";
+  data = "";
+
+
 } //--
 
 void saveConfig(JsonObject& json) {
@@ -600,19 +677,24 @@ void mqCallback(char* topic, byte* payload, unsigned int length) {
 boolean mqReconnect() {
   // Loop until we're reconnected
   while (!mqClient.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "ESP";
-    clientId += String(app_id);
+    Serial.print("\nAttempting MQTT connection... ");
+    Serial.print(mqttAddress);
+    Serial.print(":");
+    Serial.print(mqttPort);
+    Serial.print(" ");
+    Serial.print(mqttTopic);
+
     // Attempt to connect
-    if (mqClient.connect(clientId.c_str())) {
-      Serial.println("connected ");
+    if (mqClient.connect(app_id.c_str())) {
+      Serial.print("\nconnected with cid: ");
+      Serial.println(app_id);
       return true;
     } else {
-      Serial.print("failed, rc=");
+      Serial.print("\nfailed to connect!");
       return false;
     }
   }
+  return true;
 }
 
 void mqPublish(String msg) {
@@ -621,11 +703,23 @@ void mqPublish(String msg) {
   }
   mqClient.loop();
 
-  Serial.print("Publish message: ");
+  Serial.print("\nPublish message to topic '");
+  Serial.print(mqttTopic);
+  Serial.print("':");
   Serial.println(msg);
   mqClient.publish(String(mqttTopic).c_str(), msg.c_str());
 
 }
+
+//wifiManager
+void configModeCallback (WiFiManager *myWiFiManager) {
+  Serial.println("Entered config mode");
+  Serial.println(WiFi.softAPIP());
+
+  Serial.println(myWiFiManager->getConfigPortalSSID());
+  
+}
+
 
 //blink
 void blink () {
