@@ -24,7 +24,7 @@ PubSubClient mqClient(client);
 ADC_MODE(ADC_VCC);
 
 //APP
-String FIRM_VER = "1.2.8";
+String FIRM_VER = "1.2.9";
 String SENSOR = "PIR"; //BMP180, HTU21, DHT11
 
 String app_id;
@@ -90,16 +90,16 @@ void setup() { //------------------------------------------------
   //SPIFFS.format();
 
   //read configuration from FS json
-  Serial.println("mounting FS...");
+  Serial.println(F("mounting FS..."));
 
   if (SPIFFS.begin()) {
-    Serial.println("mounted file system");
+    Serial.println(F("mounted file system"));
     if (SPIFFS.exists("/config.json")) {
       //file exists, reading and loading
-      Serial.println("reading config file");
+      Serial.println(F("reading config file"));
       File configFile = SPIFFS.open("/config.json", "r");
       if (configFile) {
-        Serial.println("opened config file");
+        Serial.println(F("opened config file"));
         size_t size = configFile.size();
         // Allocate a buffer to store contents of the file.
         std::unique_ptr<char[]> buf(new char[size]);
@@ -109,7 +109,7 @@ void setup() { //------------------------------------------------
         JsonObject& jsonConfig = jsonBuffer.parseObject(buf.get());
         jsonConfig.printTo(Serial);
         if (jsonConfig.success()) {
-          Serial.println("\nparsed json");
+          Serial.println(F("\nparsed json"));
 
           //config parameters
           String timeOut1 = jsonConfig["timeOut"];
@@ -147,12 +147,12 @@ void setup() { //------------------------------------------------
           api_payload1.toCharArray(api_payload, 400, 0);
 
         } else {
-          Serial.println("failed to load json config");
+          Serial.println(F("failed to load json config"));
         }
       }
     }
   } else {
-    Serial.println("failed to mount FS");
+    Serial.println(F("failed to mount FS"));
     blink(10, 50, 20);
   }
   //end read
@@ -161,7 +161,7 @@ void setup() { //------------------------------------------------
   wifiManager.setAPCallback(configModeCallback);
   apSsid = "Config_" + app_id;
   if (!wifiManager.autoConnect(apSsid.c_str())) {
-    Serial.println("failed to connect and hit timeout");
+    Serial.println(F("failed to connect and hit timeout"));
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
     ESP.reset();
@@ -169,9 +169,9 @@ void setup() { //------------------------------------------------
   }
 
   ssid = WiFi.SSID();
-  Serial.print("\nconnected to ");
+  Serial.print(F("\nconnected to "));
   Serial.print(ssid);
-  Serial.print(" ");
+  Serial.print(F(" "));
   Serial.println(rssi);
 
   blink(3, 500);
@@ -185,7 +185,7 @@ void setup() { //------------------------------------------------
   Serial.println(" ");
   IPAddress ip = WiFi.localIP();
   espIp = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
-  Serial.print("local ip: ");
+  Serial.print(F("local ip: "));
   Serial.println(espIp);
 
   createWebServer();
@@ -202,9 +202,9 @@ void loop() {
   delay(100);
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\nreconecting ...");
+    Serial.println(F("\nreconecting ..."));
     if (!wifiManager.autoConnect(apSsid.c_str())) {
-      Serial.println("failed to connect and hit timeout");
+      Serial.println(F("failed to connect and hit timeout"));
       delay(3000);
       //reset and try again, or maybe put it to deep sleep
       ESP.reset();
@@ -229,17 +229,17 @@ void loop() {
 
   if (MODE == "AUTO") {
     if (inputState == HIGH ) {
-      Serial.println("Sensor high...");
+      Serial.println(F("Sensor high..."));
       digitalWrite(RELEY, HIGH);
       digitalWrite(BUILTINLED, LOW);
-      Serial.print("O");
+      Serial.print(F("O"));
 
       buttonPressed = false;
       String sensorData = "";
       if (!requestSent) {
         sendRequest(sensorData);
         requestSent = true;
-        Serial.print("\nFree heap: ");
+        Serial.print(F("\nFree heap: "));
         Serial.println(ESP.getFreeHeap());
       }
       lastTime = millis();
@@ -253,7 +253,7 @@ void loop() {
 
   //button pressed
   if (buttonState == LOW) {
-    Serial.println("Button pressed...");
+    Serial.println(F("Button pressed..."));
     buttonPressed = true;
     if (digitalRead(RELEY) == HIGH) {
       digitalWrite(RELEY, LOW);
@@ -274,8 +274,8 @@ void loop() {
 //web server
 void createWebServer()
 {
-  Serial.println("Starting server...");
-  Serial.println("REST handlers init...");
+  Serial.println(F("Starting server..."));
+  Serial.println(F("REST handlers init..."));
   server.on("/", []() {
     blink();
     String content;
@@ -357,7 +357,6 @@ void createWebServer()
     meta["ssid"] = ssid;
     meta["rssi"] = rssi;
     meta["freeHeap"] = ESP.getFreeHeap();
-
 
     String content;
     root.printTo(content);
@@ -463,7 +462,7 @@ void createWebServer()
     blink();
     DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
-    Serial.println("\nSaving config...");
+    Serial.println(F("\nSaving config..."));
 
     String timeOut1 = root["timeOut"];
     timeOut = timeOut1.toInt();
@@ -504,7 +503,7 @@ void createWebServer()
     pinMode(RELEY, OUTPUT);
     pinMode(GPIO_IN, INPUT);
 
-    Serial.println("\nConfiguration is saved.");
+    Serial.println(F("\nConfiguration is saved."));
     root["rc"] = 0;
     root["msg"] = "Configuration is saved.";
 
@@ -524,7 +523,7 @@ void createWebServer()
 
     root["rc"] = 0;
     root["msg"] = "Reseting ESP config...";
-    Serial.println("\nReseting ESP config...");
+    Serial.println(F("\nReseting ESP config..."));
 
     String content;
     root.printTo(content);
@@ -548,7 +547,7 @@ void createWebServer()
 
     root["rc"] = 0;
     root["msg"] = "Reseting ESP...";
-    Serial.println("\nReseting ESP...");
+    Serial.println(F("\nReseting ESP..."));
 
     String content;
     root.printTo(content);
@@ -586,7 +585,7 @@ void sendRequest(String sensorData)
     int i = 0;
     String url = rest_path;
     Serial.println("");
-    Serial.print("Connecting for request... ");
+    Serial.print(F("Connecting for request... "));
     Serial.print(String(rest_server));
     Serial.print(":");
     Serial.println(String(rest_port));
@@ -617,13 +616,13 @@ void sendRequest(String sensorData)
                  "Content-Type: application/x-www-form-urlencoded;\r\n" +
                  "Content-Length: " + data.length() + "\r\n" +
                  "\r\n" + data;
-    Serial.print("Request: ");
+    Serial.print(F("Request: "));
     Serial.println(req);
     client.print(req);
 
     delay(100);
 
-    Serial.println("Response: ");
+    Serial.println(F("Response: "));
     while (client.available()) {
       String line = client.readStringUntil('\r');
       Serial.print(line);
@@ -631,15 +630,14 @@ void sendRequest(String sensorData)
 
     blink(2, 40);
 
-    Serial.println();
-    Serial.println("Connection closed");
+    Serial.println(F("\nConnection closed"));
     req = "";
   }
 
   //MQTT publish
   if (String(mqttAddress) != "") {
     Serial.println();
-    Serial.println("MQTT publish...");
+    Serial.println(F("MQTT publish..."));
 
     mqPublish(data);
   }
@@ -654,7 +652,7 @@ void saveConfig(JsonObject& json) {
 
   File configFile = SPIFFS.open("/config.json", "w");
   if (!configFile) {
-    Serial.println("failed to open config file for writing");
+    Serial.println(F("failed to open config file for writing"));
   }
 
   json.printTo(Serial);
@@ -664,9 +662,9 @@ void saveConfig(JsonObject& json) {
 
 //MQTT
 void mqCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
+  Serial.print(F("Message arrived ["));
   Serial.print(topic);
-  Serial.print("] ");
+  Serial.print(F("] "));
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
@@ -677,20 +675,20 @@ void mqCallback(char* topic, byte* payload, unsigned int length) {
 boolean mqReconnect() {
   // Loop until we're reconnected
   while (!mqClient.connected()) {
-    Serial.print("\nAttempting MQTT connection... ");
+    Serial.print(F("\nAttempting MQTT connection... "));
     Serial.print(mqttAddress);
-    Serial.print(":");
+    Serial.print(F(":"));
     Serial.print(mqttPort);
-    Serial.print(" ");
+    Serial.print(F(" "));
     Serial.print(mqttTopic);
 
     // Attempt to connect
     if (mqClient.connect(app_id.c_str())) {
-      Serial.print("\nconnected with cid: ");
+      Serial.print(F("\nconnected with cid: "));
       Serial.println(app_id);
       return true;
     } else {
-      Serial.print("\nfailed to connect!");
+      Serial.print(F("\nfailed to connect!"));
       return false;
     }
   }
@@ -703,9 +701,9 @@ void mqPublish(String msg) {
   }
   mqClient.loop();
 
-  Serial.print("\nPublish message to topic '");
+  Serial.print(F("\nPublish message to topic '"));
   Serial.print(mqttTopic);
-  Serial.print("':");
+  Serial.print(F("':"));
   Serial.println(msg);
   mqClient.publish(String(mqttTopic).c_str(), msg.c_str());
 
@@ -713,7 +711,7 @@ void mqPublish(String msg) {
 
 //wifiManager
 void configModeCallback (WiFiManager *myWiFiManager) {
-  Serial.println("Entered config mode");
+  Serial.println(F("Entered config mode"));
   Serial.println(WiFi.softAPIP());
 
   Serial.println(myWiFiManager->getConfigPortalSSID());
