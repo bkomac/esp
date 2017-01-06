@@ -701,7 +701,7 @@ void mqPublish(String msg) {
   }
   mqClient.loop();
 
-  Serial.print(F("\nPublish message to topic '"));
+  Serial.print(F("Publish message to topic '"));
   Serial.print(mqttTopic);
   Serial.print(F("':"));
   Serial.println(msg);
