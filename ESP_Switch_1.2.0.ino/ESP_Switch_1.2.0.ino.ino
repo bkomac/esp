@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 #include <FS.h>
 
 #include <ESP8266WiFi.h>
@@ -19,12 +21,11 @@ WiFiManager wifiManager;
 WiFiClient client;
 PubSubClient mqClient(client);
 
-
 //Vcc measurement
-ADC_MODE(ADC_VCC);
+//#define ADC_MODE(ADC_VCC);
 
 //APP
-String FIRM_VER = "1.2.9";
+String FIRM_VER = "1.2.10";
 String SENSOR = "PIR"; //BMP180, HTU21, DHT11
 
 String app_id;
@@ -46,6 +47,7 @@ char mqttTopic[200] = "iot/sensor";
 
 //REST API CONFIG
 char rest_server[40] = "";
+
 boolean rest_ssl = false;
 char rest_path[200]  = "";
 int rest_port = 80;
@@ -157,12 +159,12 @@ void setup() { //------------------------------------------------
   }
   //end read
 
-  wifiManager.setConfigPortalTimeout(180);
+  wifiManager.setConfigPortalTimeout(60);
   wifiManager.setAPCallback(configModeCallback);
   apSsid = "Config_" + app_id;
   if (!wifiManager.autoConnect(apSsid.c_str())) {
     Serial.println(F("failed to connect and hit timeout"));
-    delay(3000);
+    delay(1000);
     //reset and try again, or maybe put it to deep sleep
     ESP.reset();
     delay(5000);
@@ -199,18 +201,11 @@ void setup() { //------------------------------------------------
 
 //loop ----------------------------------------------------------
 void loop() {
-  delay(100);
+  delay(10);
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println(F("\nreconecting ..."));
-    if (!wifiManager.autoConnect(apSsid.c_str())) {
-      Serial.println(F("failed to connect and hit timeout"));
-      delay(3000);
-      //reset and try again, or maybe put it to deep sleep
-      ESP.reset();
-      delay(5000);
-    }
-
+    testWifi();
   }
 
   rssi = WiFi.RSSI();
@@ -225,14 +220,16 @@ void loop() {
   if (BUTTON < 100)
     buttonState = digitalRead(BUTTON);
 
-  vcc = ESP.getVcc() / 1000.00;
+vcc = ESP.getVcc() / 1000.00;
+vcc = analogRead(A0);
+
+delay(100);
 
   if (MODE == "AUTO") {
     if (inputState == HIGH ) {
       Serial.println(F("Sensor high..."));
       digitalWrite(RELEY, HIGH);
       digitalWrite(BUILTINLED, LOW);
-      Serial.print(F("O"));
 
       buttonPressed = false;
       String sensorData = "";
@@ -715,12 +712,40 @@ void configModeCallback (WiFiManager *myWiFiManager) {
   Serial.println(WiFi.softAPIP());
 
   Serial.println(myWiFiManager->getConfigPortalSSID());
-  
+  Serial.println(F("Restarting ESP in 60 seconds..."));
+
+}
+
+//tesing for wifi connection
+bool testWifi() {
+  int c = 0;
+  Serial.println("Waiting for Wifi to connect...");
+  while ( c < 10 ) {
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println(F("WiFi connected."));
+      blink(1, 250);
+      return true;
+    }
+    blink(1, 200);
+    delay(500);
+    Serial.print(F("Retrying to connect to WiFi... "));
+    Serial.println(WiFi.status());
+    c++;
+  }
+  Serial.println(F(""));
+  Serial.println(F("Connect timed out"));
+  Serial.println(F("Resetnig ESP ..."));
+  blink(20, 30);
+  delay(1000);
+  //reset esp
+  ESP.reset();
+  delay(5000);
+  return false;
 }
 
 
 //blink
-void blink () {
+void blink (void) {
   blink(1, 30, 30);
 }
 
