@@ -24,7 +24,7 @@ PubSubClient mqClient(client);
 //#define ADC_MODE(ADC_VCC);
 
 //APP
-String FIRM_VER = "1.3.2";
+String FIRM_VER = "1.3.4";
 String SENSOR = "PIR"; //BMP180, HTU21, DHT11
 
 String app_id;
@@ -36,6 +36,8 @@ String ssid;
 
 
 //CONF
+char deviceName[100] = "ESP";
+
 char essid[40] = "";
 char epwd[40] = "";
 
@@ -89,6 +91,7 @@ void setup() { //------------------------------------------------
   app_id = "ESP" + getMac();
   Serial.print(F("**App ID: "));
   Serial.println(app_id);
+  app_id.toCharArray(deviceName, 200, 0);
 
   //clean FS, for testing
   //SPIFFS.format();
@@ -121,6 +124,10 @@ void setup() { //------------------------------------------------
           String pwd1 = jsonConfig["password"].asString();
           pwd1.toCharArray(epwd, 40, 0);
           */
+
+          String deviceName1 = jsonConfig["deviceName"].asString();
+          if(deviceName1 != "")
+            deviceName1.toCharArray(deviceName, 200, 0);
 
           String timeOut1 = jsonConfig["timeOut"];
           timeOut = timeOut1.toInt();
@@ -176,18 +183,18 @@ void setup() { //------------------------------------------------
     pinMode(GPIO_IN, INPUT);
 
 
-    if (String(essid) != "") {
-      Serial.print("SID found. Trying to connect to ");
-      Serial.print(essid);
-      Serial.println("");
-      WiFi.begin(essid, epwd);
-      delay(100);
-      if (testWifi()) {
 
-      }else{
-        setupAP();
-      }
+    Serial.print("SID found. Trying to connect to ");
+    Serial.print(essid);
+    Serial.println("");
+    WiFi.begin(essid, epwd);
+    delay(100);
+    if (testWifi()) {
+
+    }else{
+      setupAP();
     }
+
 
     ssid = WiFi.SSID();
     Serial.print(F("\nconnected to "));
@@ -373,7 +380,7 @@ void createWebServer()
     root.printTo(content);
     server.send(200, "application/json", content);
 
-    Serial.print("/switch/status: ");
+    Serial.print("\n\n/switch/status: ");
     root.printTo(Serial);
 
   });
@@ -541,9 +548,6 @@ void createWebServer()
 
     Serial.println(essid);
 
-    pinMode(RELEY, OUTPUT);
-    pinMode(GPIO_IN, INPUT);
-
     Serial.println(F("\nNew ssid is set. ESP will reconect..."));
     root["rc"] = 0;
     root["msg"] = "New ssid is set. ESP will reconect.";
@@ -553,6 +557,8 @@ void createWebServer()
     server.send(200, "application/json", content);
 
     WiFi.disconnect();
+    delay(1000);
+    WiFi.mode(WIFI_STA);
     delay(1000);
     WiFi.begin(essid, epwd);
     delay(1000);
