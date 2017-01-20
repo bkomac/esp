@@ -21,10 +21,10 @@ WiFiClient client;
 PubSubClient mqClient(client);
 
 //Vcc measurement
-//#define ADC_MODE(ADC_VCC);
+#define ADC_MODE(ADC_VCC);
 
 //APP
-String FIRM_VER = "1.3.4";
+String FIRM_VER = "1.3.6";
 String SENSOR = "PIR"; //BMP180, HTU21, DHT11
 
 String app_id;
@@ -93,9 +93,60 @@ void setup() { //------------------------------------------------
   Serial.println(app_id);
   app_id.toCharArray(deviceName, 200, 0);
 
+  //auto connect
+  WiFi.setAutoConnect(true) ;
+
   //clean FS, for testing
   //SPIFFS.format();
 
+  //read config
+  readFS();
+
+  apSsid = "Config_" + app_id;
+
+  pinMode(RELEY, OUTPUT);
+  pinMode(BUILTINLED, OUTPUT);
+  if (GPIO_IN < 100)
+    pinMode(GPIO_IN, INPUT);
+
+
+if(essid != ""){
+    Serial.print("SID found. Trying to connect to ");
+    Serial.print(essid);
+    Serial.println("");
+    WiFi.begin(essid, epwd);
+    delay(100);
+  }
+    if (testWifi()) {
+
+    }else{
+      setupAP();
+    }
+
+
+    ssid = WiFi.SSID();
+    Serial.print(F("\nconnected to "));
+    Serial.print(ssid);
+    Serial.print(F(" "));
+    Serial.println(rssi);
+
+    blink(3, 500);
+  Serial.println(" ");
+  IPAddress ip = WiFi.localIP();
+  espIp = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+  Serial.print(F("local ip: "));
+  Serial.println(espIp);
+  yield();
+  createWebServer();
+
+  //MQTT
+  if (mqttAddress != "") {
+    mqClient.setServer(mqttAddress, mqttPort);
+    mqClient.setCallback(mqCallback);
+  }
+}
+
+void readFS(){
   //read configuration from FS json
   Serial.println(F("mounting FS..."));
 
@@ -119,11 +170,10 @@ void setup() { //------------------------------------------------
           Serial.println(F("\nparsed json"));
 
           //config parameters
-        /*  String ssid1 = jsonConfig["ssid"].asString();
+          String ssid1 = jsonConfig["ssid"].asString();
           ssid1.toCharArray(essid, 40, 0);
           String pwd1 = jsonConfig["password"].asString();
           pwd1.toCharArray(epwd, 40, 0);
-          */
 
           String deviceName1 = jsonConfig["deviceName"].asString();
           if(deviceName1 != "")
@@ -173,49 +223,6 @@ void setup() { //------------------------------------------------
     blink(10, 50, 20);
   }
   //end read
-
-
-  apSsid = "Config_" + app_id;
-
-  pinMode(RELEY, OUTPUT);
-  pinMode(BUILTINLED, OUTPUT);
-  if (GPIO_IN < 100)
-    pinMode(GPIO_IN, INPUT);
-
-
-
-    Serial.print("SID found. Trying to connect to ");
-    Serial.print(essid);
-    Serial.println("");
-    WiFi.begin(essid, epwd);
-    delay(100);
-    if (testWifi()) {
-
-    }else{
-      setupAP();
-    }
-
-
-    ssid = WiFi.SSID();
-    Serial.print(F("\nconnected to "));
-    Serial.print(ssid);
-    Serial.print(F(" "));
-    Serial.println(rssi);
-
-    blink(3, 500);
-  Serial.println(" ");
-  IPAddress ip = WiFi.localIP();
-  espIp = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
-  Serial.print(F("local ip: "));
-  Serial.println(espIp);
-  yield();
-  createWebServer();
-
-  //MQTT
-  if (mqttAddress != "") {
-    mqClient.setServer(mqttAddress, mqttPort);
-    mqClient.setCallback(mqCallback);
-  }
 }
 
 //loop ----------------------------------------------------------
@@ -231,7 +238,6 @@ void loop() {
 
   server.handleClient();
 
-
   int inputState = LOW;
   if (GPIO_IN < 100)
     inputState = digitalRead(GPIO_IN);
@@ -241,7 +247,7 @@ void loop() {
     buttonState = digitalRead(BUTTON);
 
 vcc = ESP.getVcc() / 1000.00;
-vcc = analogRead(A0);
+//vcc = analogRead(A0);
 
 delay(100);
 
@@ -299,11 +305,26 @@ void createWebServer()
     String content;
 
     content = "<!DOCTYPE HTML>\r\n<html>";
-    content += "<h1>ESP web server</h1>";
+    content += "<h1><u>ESP web server</u></h1>";
     content += "<p>IP: " + espIp + "</p>";
     content += "<p>MAC/AppId: " + app_id + "</p>";
     content += "<p>Version: " + FIRM_VER + "</p>";
-    content += "<p>Voltage: " + String(vcc) + " V</p>";
+    content += "<p>Vcc: " + String(vcc) + " V</p>";
+    content += "<br><p><b>REST API: </b>";
+    content += "<br>GET: <a href='http://"+ espIp +"/switch/auto'>http://"+ espIp +"/switch/auto </a>";
+    content += "<br>GET: <a href='http://"+ espIp +"/switch/on'>http://"+ espIp +"/switch/on </a>";
+    content += "<br>GET: <a href='http://"+ espIp +"/switch/off'>http://"+ espIp +"/switch/off </a>";
+    content += "<br>GET: <a href='http://"+ espIp +"/switch/status'>http://"+ espIp +"/status </a>";
+    content += "<br>GET: <a href='http://"+ espIp +"/update'>http://"+ espIp +"/update </a>";
+    content += "<br>POST: <a href='http://"+ espIp +"/update'>http://"+ espIp +"/update </a>";
+    content += "<br>GET: <a href='http://"+ espIp +"/config'>http://"+ espIp +"/config </a>";
+    content += "<br>POST: <a href='http://"+ espIp +"/config'>http://"+ espIp +"/config </a>";
+    content += "<br>GET: <a href='http://"+ espIp +"/ssid'>http://"+ espIp +"/ssid </a>";
+    content += "<br>POST: <a href='http://"+ espIp +"/ssid'>http://"+ espIp +"/ssid </a>";
+    content += "<br>GET: <a href='http://"+ espIp +"/reset'>http://"+ espIp +"/reset </a>";
+    content += "<br>DELETE: <a href='http://"+ espIp +"/reset'>http://"+ espIp +"/reset </a>";
+
+
     content += "</html>";
     server.send(200, "text/html", content);
   });
@@ -354,7 +375,7 @@ void createWebServer()
     server.send(200, "application/json", content);
   });
 
-  server.on("/switch/status", HTTP_GET, []() {
+  server.on("/status", HTTP_GET, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
@@ -370,9 +391,9 @@ void createWebServer()
     JsonObject& meta = root.createNestedObject("meta");
     meta["version"] = FIRM_VER;
     meta["sensor"] = SENSOR;
-    meta["voltage"] = vcc;
+    meta["adc_vcc"] = vcc;
 
-    meta["ssid"] = ssid;
+    meta["ssid"] = essid;
     meta["rssi"] = rssi;
     meta["freeHeap"] = ESP.getFreeHeap();
 
@@ -454,6 +475,9 @@ void createWebServer()
     DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
 
+    root["ssid"] = essid;
+    root["password"] = epwd;
+
     root["timeOut"] = timeOut;
     root["relleyPin"] = RELEY;
     root["sensorInPin"] = GPIO_IN;
@@ -480,6 +504,11 @@ void createWebServer()
     DynamicJsonBuffer jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
     Serial.println(F("\nSaving config..."));
+
+    String ssid1 = root["ssid"].asString();
+    ssid1.toCharArray(essid, 40, 0);
+    String pwd1 = root["password"].asString();
+    pwd1.toCharArray(epwd, 40, 0);
 
     String timeOut1 = root["timeOut"];
     timeOut = timeOut1.toInt();
@@ -532,6 +561,25 @@ void createWebServer()
     if (mqttAddress != "") {
       mqClient.setServer(mqttAddress, mqttPort);
     }
+  });
+
+  server.on("/ssid", HTTP_GET, []() {
+    blink();
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+
+    root["ssid"] = essid;
+    root["password"] = epwd;
+
+    root["connectedTo"] = WiFi.SSID();
+    root["localIP"] = WiFi.localIP().toString();
+
+    root["softAPIP"] = WiFi.softAPIP().toString();
+
+    String content;
+    root.printTo(content);
+    server.send(200, "application/json", content);
+
   });
 
   server.on("/ssid", HTTP_POST, []() {
@@ -723,9 +771,9 @@ void mqCallback(char* topic, byte* payload, unsigned int length) {
   blink(3, 50);
 }
 
-boolean mqReconnect() {
+bool mqReconnect() {
   // Loop until we're reconnected
-  while (!mqClient.connected()) {
+  if(!mqClient.connected()) {
     Serial.print(F("\nAttempting MQTT connection... "));
     Serial.print(mqttAddress);
     Serial.print(F(":"));
@@ -742,22 +790,28 @@ boolean mqReconnect() {
       Serial.print(F("\nfailed to connect!"));
       return false;
     }
+  }else{
+    Serial.print(F("\nMQTT is already connected."));
+    return true;
   }
-  return true;
+
 }
 
 void mqPublish(String msg) {
-  if (!mqClient.connected()) {
-    mqReconnect();
+
+  if (mqReconnect()) {
+
+    //mqClient.loop();
+
+    Serial.print(F("\nPublish message to topic '"));
+    Serial.print(mqttTopic);
+    Serial.print(F("':"));
+    Serial.println(msg);
+    mqClient.publish(String(mqttTopic).c_str(), msg.c_str());
+
+  }else{
+    Serial.print(F("\nPublish failed!"));
   }
-  mqClient.loop();
-
-  Serial.print(F("Publish message to topic '"));
-  Serial.print(mqttTopic);
-  Serial.print(F("':"));
-  Serial.println(msg);
-  mqClient.publish(String(mqttTopic).c_str(), msg.c_str());
-
 }
 
 //tesing for wifi connection
@@ -775,14 +829,16 @@ bool testWifi() {
     blink(1, 200);
     delay(500);
     Serial.print(F("Retrying to connect to WiFi... "));
+    Serial.print(essid);
+    Serial.print(F(" status="));
     Serial.println(WiFi.status());
     c++;
   }
   Serial.println(F(""));
   Serial.println(F("Connect timed out"));
-  Serial.println(F("Resetnig ESP ..."));
+
   blink(20, 30);
-  //delay(1000);
+  delay(1000);
   //reset esp
   //ESP.reset();
   //delay(3000);
