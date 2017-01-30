@@ -5,7 +5,7 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-//needed for library
+// needed for library
 //#include <DNSServer.h>
 #include <ESP8266WebServer.h>
 
@@ -20,22 +20,25 @@ ESP8266WebServer server(80);
 WiFiClient client;
 PubSubClient mqClient(client);
 
-//Vcc measurement
-#define ADC_MODE(ADC_VCC);
+// Vcc measurement
+ADC_MODE(ADC_VCC);
 
-//APP
-String FIRM_VER = "1.3.6";
-String SENSOR = "PIR"; //BMP180, HTU21, DHT11
+// APP
+String FIRM_VER = "1.3.8";
+String SENSOR = "PIR, DHT11"; // BMP180, HTU21, DHT11
 
 String app_id;
 float vcc;
+long startTime;
 String espIp;
 String apSsid;
 int rssi;
 String ssid;
 
+float humd;
+float temp;
 
-//CONF
+// CONF
 char deviceName[100] = "ESP";
 
 char essid[40] = "";
@@ -44,16 +47,16 @@ char epwd[40] = "";
 String MODE = "AUTO";
 int timeOut = 5000;
 
-//mqtt config
+// mqtt config
 char mqttAddress[200] = "";
 int mqttPort = 1883;
 char mqttTopic[200] = "iot/sensor";
 
-//REST API CONFIG
+// REST API CONFIG
 char rest_server[40] = "";
 
 boolean rest_ssl = false;
-char rest_path[200]  = "";
+char rest_path[200] = "";
 int rest_port = 80;
 char api_token[100] = "";
 char api_payload[400] = "";
@@ -62,15 +65,15 @@ boolean buttonPressed = false;
 boolean requestSent = false;
 int lastTime = millis();
 
-//StaticJsonBuffer<500> jsonBuffer;
+// StaticJsonBuffer<500> jsonBuffer;
 
 int BUILTINLED = 13;
 int RELEY = 12;
 int GPIO_IN = 14;
 #define BUTTON 0
 
-//DHT
-#define DHTPIN 3
+// DHT
+#define DHTPIN 13
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -79,6 +82,8 @@ void setup() { //------------------------------------------------
   Serial.begin(115200);
   Serial.println();
 
+  startTime = millis();
+
   pinMode(BUTTON, INPUT);
   pinMode(BUILTINLED, OUTPUT);
 
@@ -86,20 +91,20 @@ void setup() { //------------------------------------------------
   digitalWrite(BUILTINLED, LOW);
 
   blink(1, 500);
-  //dht.begin();
+  dht.begin();
 
   app_id = "ESP" + getMac();
   Serial.print(F("**App ID: "));
   Serial.println(app_id);
   app_id.toCharArray(deviceName, 200, 0);
 
-  //auto connect
-  WiFi.setAutoConnect(true) ;
+  // auto connect
+  WiFi.setAutoConnect(true);
 
-  //clean FS, for testing
-  //SPIFFS.format();
+  // clean FS, for testing
+  // SPIFFS.format();
 
-  //read config
+  // read config
   readFS();
 
   apSsid = "Config_" + app_id;
@@ -109,51 +114,46 @@ void setup() { //------------------------------------------------
   if (GPIO_IN < 100)
     pinMode(GPIO_IN, INPUT);
 
-
-if(essid != ""){
+  if (essid != "") {
     Serial.print("SID found. Trying to connect to ");
     Serial.print(essid);
     Serial.println("");
     WiFi.begin(essid, epwd);
     delay(100);
   }
-    if (testWifi()) {
+  if (!testWifi())
+    setupAP();
 
-    }else{
-      setupAP();
-    }
+  ssid = WiFi.SSID();
+  Serial.print(F("\nconnected to "));
+  Serial.print(ssid);
+  Serial.print(F(" "));
+  Serial.println(rssi);
 
-
-    ssid = WiFi.SSID();
-    Serial.print(F("\nconnected to "));
-    Serial.print(ssid);
-    Serial.print(F(" "));
-    Serial.println(rssi);
-
-    blink(3, 500);
   Serial.println(" ");
   IPAddress ip = WiFi.localIP();
-  espIp = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+  espIp = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' +
+          String(ip[3]);
   Serial.print(F("local ip: "));
   Serial.println(espIp);
   yield();
   createWebServer();
 
-  //MQTT
+  // MQTT
   if (mqttAddress != "") {
     mqClient.setServer(mqttAddress, mqttPort);
     mqClient.setCallback(mqCallback);
   }
 }
 
-void readFS(){
-  //read configuration from FS json
+void readFS() {
+  // read configuration from FS json
   Serial.println(F("mounting FS..."));
 
   if (SPIFFS.begin()) {
     Serial.println(F("mounted file system"));
     if (SPIFFS.exists("/config.json")) {
-      //file exists, reading and loading
+      // file exists, reading and loading
       Serial.println(F("reading config file"));
       File configFile = SPIFFS.open("/config.json", "r");
       if (configFile) {
@@ -164,19 +164,19 @@ void readFS(){
 
         configFile.readBytes(buf.get(), size);
         DynamicJsonBuffer jsonBuffer;
-        JsonObject& jsonConfig = jsonBuffer.parseObject(buf.get());
+        JsonObject &jsonConfig = jsonBuffer.parseObject(buf.get());
         jsonConfig.printTo(Serial);
         if (jsonConfig.success()) {
           Serial.println(F("\nparsed json"));
 
-          //config parameters
+          // config parameters
           String ssid1 = jsonConfig["ssid"].asString();
           ssid1.toCharArray(essid, 40, 0);
           String pwd1 = jsonConfig["password"].asString();
           pwd1.toCharArray(epwd, 40, 0);
 
           String deviceName1 = jsonConfig["deviceName"].asString();
-          if(deviceName1 != "")
+          if (deviceName1 != "")
             deviceName1.toCharArray(deviceName, 200, 0);
 
           String timeOut1 = jsonConfig["timeOut"];
@@ -222,18 +222,12 @@ void readFS(){
     Serial.println(F("failed to mount FS"));
     blink(10, 50, 20);
   }
-  //end read
+  // end read
 }
 
-//loop ----------------------------------------------------------
+// loop ----------------------------------------------------------
 void loop() {
   delay(10);
-
-  /*if (WiFi.status() != WL_CONNECTED) {
-    Serial.println(F("\nreconecting ..."));
-    testWifi();
-  }*/
-
   rssi = WiFi.RSSI();
 
   server.handleClient();
@@ -246,24 +240,29 @@ void loop() {
   if (BUTTON < 100)
     buttonState = digitalRead(BUTTON);
 
-vcc = ESP.getVcc() / 1000.00;
-//vcc = analogRead(A0);
+  vcc = ESP.getVcc() / 1000.00;
+  // vcc = analogRead(A0);
 
-delay(100);
+  delay(100);
+  humd = dht.readHumidity();
+  delay(100);
+  temp = dht.readTemperature();
+
+  delay(100);
 
   if (MODE == "AUTO") {
-    if (inputState == HIGH ) {
+    if (inputState == HIGH) {
       Serial.println(F("Sensor high..."));
       digitalWrite(RELEY, HIGH);
       digitalWrite(BUILTINLED, LOW);
 
       buttonPressed = false;
-      String sensorData = "";
+      String sensorData =
+          "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
+
       if (!requestSent) {
         sendRequest(sensorData);
         requestSent = true;
-        Serial.print(F("\nFree heap: "));
-        Serial.println(ESP.getFreeHeap());
       }
       lastTime = millis();
     }
@@ -274,7 +273,7 @@ delay(100);
     }
   }
 
-  //button pressed
+  // button pressed
   if (buttonState == LOW) {
     Serial.println(F("Button pressed..."));
     buttonPressed = true;
@@ -291,12 +290,10 @@ delay(100);
   //  mqPublish("Hi there!");
   delay(100);
 
+} //---------------------------------------------------------------
 
-}//---------------------------------------------------------------
-
-//web server
-void createWebServer()
-{
+// web server
+void createWebServer() {
   Serial.println(F("Starting server..."));
   Serial.println(F("REST handlers init..."));
   yield();
@@ -311,19 +308,30 @@ void createWebServer()
     content += "<p>Version: " + FIRM_VER + "</p>";
     content += "<p>Vcc: " + String(vcc) + " V</p>";
     content += "<br><p><b>REST API: </b>";
-    content += "<br>GET: <a href='http://"+ espIp +"/switch/auto'>http://"+ espIp +"/switch/auto </a>";
-    content += "<br>GET: <a href='http://"+ espIp +"/switch/on'>http://"+ espIp +"/switch/on </a>";
-    content += "<br>GET: <a href='http://"+ espIp +"/switch/off'>http://"+ espIp +"/switch/off </a>";
-    content += "<br>GET: <a href='http://"+ espIp +"/switch/status'>http://"+ espIp +"/status </a>";
-    content += "<br>GET: <a href='http://"+ espIp +"/update'>http://"+ espIp +"/update </a>";
-    content += "<br>POST: <a href='http://"+ espIp +"/update'>http://"+ espIp +"/update </a>";
-    content += "<br>GET: <a href='http://"+ espIp +"/config'>http://"+ espIp +"/config </a>";
-    content += "<br>POST: <a href='http://"+ espIp +"/config'>http://"+ espIp +"/config </a>";
-    content += "<br>GET: <a href='http://"+ espIp +"/ssid'>http://"+ espIp +"/ssid </a>";
-    content += "<br>POST: <a href='http://"+ espIp +"/ssid'>http://"+ espIp +"/ssid </a>";
-    content += "<br>GET: <a href='http://"+ espIp +"/reset'>http://"+ espIp +"/reset </a>";
-    content += "<br>DELETE: <a href='http://"+ espIp +"/reset'>http://"+ espIp +"/reset </a>";
-
+    content += "<br>GET: <a href='http://" + espIp + "/switch/auto'>http://" +
+               espIp + "/switch/auto </a>";
+    content += "<br>GET: <a href='http://" + espIp + "/switch/on'>http://" +
+               espIp + "/switch/on </a>";
+    content += "<br>GET: <a href='http://" + espIp + "/switch/off'>http://" +
+               espIp + "/switch/off </a>";
+    content += "<br>GET: <a href='http://" + espIp + "/switch/status'>http://" +
+               espIp + "/status </a>";
+    content += "<br>GET: <a href='http://" + espIp + "/update'>http://" +
+               espIp + "/update </a>";
+    content += "<br>POST: <a href='http://" + espIp + "/update'>http://" +
+               espIp + "/update </a>";
+    content += "<br>GET: <a href='http://" + espIp + "/config'>http://" +
+               espIp + "/config </a>";
+    content += "<br>POST: <a href='http://" + espIp + "/config'>http://" +
+               espIp + "/config </a>";
+    content += "<br>GET: <a href='http://" + espIp + "/ssid'>http://" + espIp +
+               "/ssid </a>";
+    content += "<br>POST: <a href='http://" + espIp + "/ssid'>http://" + espIp +
+               "/ssid </a>";
+    content += "<br>GET: <a href='http://" + espIp + "/reset'>http://" + espIp +
+               "/reset </a>";
+    content += "<br>DELETE: <a href='http://" + espIp + "/reset'>http://" +
+               espIp + "/reset </a>";
 
     content += "</html>";
     server.send(200, "text/html", content);
@@ -332,7 +340,7 @@ void createWebServer()
   server.on("/switch/auto", []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
     root["rc"] = 0;
     if (digitalRead(RELEY) == HIGH) {
       root["status"] = "on";
@@ -350,7 +358,7 @@ void createWebServer()
   server.on("/switch/on", []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
     root["rc"] = 0;
     root["status"] = "on";
     MODE = "MANUAL";
@@ -364,7 +372,7 @@ void createWebServer()
   server.on("/switch/off", []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
     root["rc"] = 0;
     root["status"] = "off";
     MODE = "MANUAL";
@@ -378,7 +386,7 @@ void createWebServer()
   server.on("/status", HTTP_GET, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
     root["rc"] = 0;
     root["mode"] = MODE;
     if (digitalRead(RELEY) == HIGH) {
@@ -388,7 +396,7 @@ void createWebServer()
       root["status"] = "off";
       digitalWrite(BUILTINLED, HIGH);
     }
-    JsonObject& meta = root.createNestedObject("meta");
+    JsonObject &meta = root.createNestedObject("meta");
     meta["version"] = FIRM_VER;
     meta["sensor"] = SENSOR;
     meta["adc_vcc"] = vcc;
@@ -396,6 +404,7 @@ void createWebServer()
     meta["ssid"] = essid;
     meta["rssi"] = rssi;
     meta["freeHeap"] = ESP.getFreeHeap();
+    meta["upTimeSec"] = (millis() - startTime) / 1000;
 
     String content;
     root.printTo(content);
@@ -409,7 +418,7 @@ void createWebServer()
   server.on("/update", HTTP_GET, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
 
     root["url"] = "Enter url to bin file here and POST json object to ESP.";
 
@@ -421,7 +430,7 @@ void createWebServer()
   server.on("/update", HTTP_POST, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
+    JsonObject &root = jsonBuffer.parseObject(server.arg("plain"));
     Serial.println("Updating firmware...");
     String message = "";
     //    for (uint8_t i = 0; i < server.args(); i++) {
@@ -439,33 +448,35 @@ void createWebServer()
     t_httpUpdate_return ret = ESPhttpUpdate.update(url);
 
     switch (ret) {
-      case HTTP_UPDATE_FAILED:
-        Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-        root["rc"] = ESPhttpUpdate.getLastError();
-        message += "HTTP_UPDATE_FAILD Error (";
-        message += ESPhttpUpdate.getLastError();
-        message += "): ";
-        message += ESPhttpUpdate.getLastErrorString().c_str();
-        root["msg"] = message;
-        root.printTo(content);
-        server.send ( 200, "application/json", content );
-        break;
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s",
+                    ESPhttpUpdate.getLastError(),
+                    ESPhttpUpdate.getLastErrorString().c_str());
+      root["rc"] = ESPhttpUpdate.getLastError();
+      message += "HTTP_UPDATE_FAILD Error (";
+      message += ESPhttpUpdate.getLastError();
+      message += "): ";
+      message += ESPhttpUpdate.getLastErrorString().c_str();
+      root["msg"] = message;
+      root.printTo(content);
+      server.send(200, "application/json", content);
+      break;
 
-      case HTTP_UPDATE_NO_UPDATES:
-        Serial.println("HTTP_UPDATE_NO_UPDATES");
-        root["rc"] = 1;
-        root["msg"] = "HTTP_UPDATE_NO_UPDATES";
-        root.printTo(content);
-        server.send ( 200, "application/json", content );
-        break;
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("HTTP_UPDATE_NO_UPDATES");
+      root["rc"] = 1;
+      root["msg"] = "HTTP_UPDATE_NO_UPDATES";
+      root.printTo(content);
+      server.send(200, "application/json", content);
+      break;
 
-      case HTTP_UPDATE_OK:
-        Serial.println("HTTP_UPDATE_OK");
-        root["rc"] = 0;
-        root["msg"] = "HTTP_UPDATE_OK";
-        root.printTo(content);
-        server.send ( 200, "application/json", content );
-        break;
+    case HTTP_UPDATE_OK:
+      Serial.println("HTTP_UPDATE_OK");
+      root["rc"] = 0;
+      root["msg"] = "HTTP_UPDATE_OK";
+      root.printTo(content);
+      server.send(200, "application/json", content);
+      break;
     }
 
   });
@@ -473,7 +484,7 @@ void createWebServer()
   server.on("/config", HTTP_GET, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
 
     root["ssid"] = essid;
     root["password"] = epwd;
@@ -502,7 +513,7 @@ void createWebServer()
   server.on("/config", HTTP_POST, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
+    JsonObject &root = jsonBuffer.parseObject(server.arg("plain"));
     Serial.println(F("\nSaving config..."));
 
     String ssid1 = root["ssid"].asString();
@@ -566,7 +577,7 @@ void createWebServer()
   server.on("/ssid", HTTP_GET, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
 
     root["ssid"] = essid;
     root["password"] = epwd;
@@ -585,9 +596,8 @@ void createWebServer()
   server.on("/ssid", HTTP_POST, []() {
     blink(5);
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.parseObject(server.arg("plain"));
+    JsonObject &root = jsonBuffer.parseObject(server.arg("plain"));
     Serial.print(F("\nSetting ssid to "));
-
 
     String ssid1 = root["ssid"].asString();
     ssid1.toCharArray(essid, 40, 0);
@@ -617,7 +627,7 @@ void createWebServer()
   server.on("/reset", HTTP_DELETE, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
 
     root["rc"] = 0;
     root["msg"] = "Reseting ESP config...";
@@ -628,10 +638,10 @@ void createWebServer()
     server.send(200, "application/json", content);
     delay(3000);
 
-    //clean FS, for testing
+    // clean FS, for testing
     SPIFFS.format();
     delay(1000);
-    //reset settings - for testing
+    // reset settings - for testing
     WiFi.disconnect(true);
     delay(1000);
 
@@ -642,7 +652,7 @@ void createWebServer()
   server.on("/reset", HTTP_GET, []() {
     blink();
     DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
+    JsonObject &root = jsonBuffer.createObject();
 
     root["rc"] = 0;
     root["msg"] = "Reseting ESP...";
@@ -659,28 +669,23 @@ void createWebServer()
   server.begin();
   Serial.println("Server started");
 
-}//--
+} //--
 
-//send request ---------------------------------------------------------
-void sendRequest(String sensorData)
-{
+// send request ---------------------------------------------------------
+void sendRequest(String sensorData) {
   String api_payload_s = String(api_payload);
   if (api_payload_s != "")
     api_payload_s = api_payload_s + ", ";
-  if (sensorData != "")
-    sensorData = sensorData + ", ";
-  String data = "{" + api_payload_s + "\"sensor\":{\"sensor_type\":\"" + SENSOR +
-                "\", \"data\":{" + sensorData + "}" +
-                ", \"ver\":\"" + FIRM_VER + "\"" +
-                ", \"ip\":\"" + espIp + "\"" +
-                ", \"id\":\"" + app_id + "\"" +
-                ", \"vcc\":" + vcc +
-                "}}";
 
-  //REST request
+  String data = "{" + api_payload_s + "\"sensor\":{\"sensor_type\":\"" +
+                SENSOR + "\", \"data\":{" + sensorData + "}" + ", \"ver\":\"" +
+                FIRM_VER + "\"" + ", \"ip\":\"" + espIp + "\"" + ", \"id\":\"" +
+                app_id + "\"" + ", \"vcc\":" + vcc + "}}";
+
+  // REST request
   if (String(rest_server) != "") {
     WiFiClientSecure client;
-    //WiFiClient client;
+    // WiFiClient client;
     int i = 0;
     String url = rest_path;
     Serial.println("");
@@ -705,16 +710,14 @@ void sendRequest(String sensorData)
     Serial.print("POST data to URL: ");
     Serial.println(url);
     delay(10);
-    String req = String("POST ") + url + " HTTP/1.1\r\n" +
-                 "Host: " + String(rest_server) + "\r\n" +
-                 "User-Agent: ESP/1.0\r\n" +
+    String req = String("POST ") + url + " HTTP/1.1\r\n" + "Host: " +
+                 String(rest_server) + "\r\n" + "User-Agent: ESP/1.0\r\n" +
                  "Content-Type: application/json\r\n" +
-                 "Cache-Control: no-cache\r\n" +
-                 "Sensor-Id: " + String(app_id) + "\r\n" +
-                 "Token: " + String(api_token) + "\r\n" +
+                 "Cache-Control: no-cache\r\n" + "Sensor-Id: " +
+                 String(app_id) + "\r\n" + "Token: " + String(api_token) +
+                 "\r\n" +
                  "Content-Type: application/x-www-form-urlencoded;\r\n" +
-                 "Content-Length: " + data.length() + "\r\n" +
-                 "\r\n" + data;
+                 "Content-Length: " + data.length() + "\r\n" + "\r\n" + data;
     Serial.print(F("Request: "));
     Serial.println(req);
     client.print(req);
@@ -733,7 +736,7 @@ void sendRequest(String sensorData)
     req = "";
   }
 
-  //MQTT publish
+  // MQTT publish
   if (String(mqttAddress) != "") {
     Serial.println();
     Serial.println(F("MQTT publish..."));
@@ -744,10 +747,9 @@ void sendRequest(String sensorData)
   api_payload_s = "";
   data = "";
 
-
 } //--
 
-void saveConfig(JsonObject& json) {
+void saveConfig(JsonObject &json) {
 
   File configFile = SPIFFS.open("/config.json", "w");
   if (!configFile) {
@@ -759,8 +761,8 @@ void saveConfig(JsonObject& json) {
   configFile.close();
 }
 
-//MQTT
-void mqCallback(char* topic, byte* payload, unsigned int length) {
+// MQTT
+void mqCallback(char *topic, byte *payload, unsigned int length) {
   Serial.print(F("Message arrived ["));
   Serial.print(topic);
   Serial.print(F("] "));
@@ -772,8 +774,8 @@ void mqCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 bool mqReconnect() {
-  // Loop until we're reconnected
-  if(!mqClient.connected()) {
+  yield();
+  if (!mqClient.connected()) {
     Serial.print(F("\nAttempting MQTT connection... "));
     Serial.print(mqttAddress);
     Serial.print(F(":"));
@@ -781,8 +783,10 @@ bool mqReconnect() {
     Serial.print(F(" "));
     Serial.print(mqttTopic);
 
+    yield();
     // Attempt to connect
     if (mqClient.connect(app_id.c_str())) {
+      yield();
       Serial.print(F("\nconnected with cid: "));
       Serial.println(app_id);
       return true;
@@ -790,18 +794,17 @@ bool mqReconnect() {
       Serial.print(F("\nfailed to connect!"));
       return false;
     }
-  }else{
+  } else {
     Serial.print(F("\nMQTT is already connected."));
     return true;
   }
-
 }
 
 void mqPublish(String msg) {
 
   if (mqReconnect()) {
 
-    //mqClient.loop();
+    // mqClient.loop();
 
     Serial.print(F("\nPublish message to topic '"));
     Serial.print(mqttTopic);
@@ -809,21 +812,21 @@ void mqPublish(String msg) {
     Serial.println(msg);
     mqClient.publish(String(mqttTopic).c_str(), msg.c_str());
 
-  }else{
+  } else {
     Serial.print(F("\nPublish failed!"));
   }
 }
 
-//tesing for wifi connection
+// tesing for wifi connection
 bool testWifi() {
   int c = 0;
   Serial.println("Waiting for Wifi to connect...");
-  while ( c < 10 ) {
+  while (c < 20) {
     if (WiFi.status() == WL_CONNECTED) {
       Serial.print(F("WiFi connected to "));
       Serial.println(WiFi.SSID());
 
-      blink(1, 250);
+      blink(2, 30, 1000);
       return true;
     }
     blink(1, 200);
@@ -839,9 +842,9 @@ bool testWifi() {
 
   blink(20, 30);
   delay(1000);
-  //reset esp
-  //ESP.reset();
-  //delay(3000);
+  // reset esp
+  // ESP.reset();
+  // delay(3000);
   return false;
 }
 
@@ -855,13 +858,11 @@ void setupAP(void) {
   Serial.println("Scanning network done");
   if (n == 0)
     Serial.println("No networks found");
-  else
-  {
+  else {
     Serial.print(n);
     Serial.println(" networks found");
     Serial.println("---------------------------------");
-    for (int i = 0; i < n; ++i)
-    {
+    for (int i = 0; i < n; ++i) {
       // Print SSID and RSSI for each network found
       Serial.print(i + 1);
       Serial.print(": ");
@@ -875,8 +876,7 @@ void setupAP(void) {
   }
   Serial.println("");
   String st = "<ol>";
-  for (int i = 0; i < n; ++i)
-  {
+  for (int i = 0; i < n; ++i) {
     // Print SSID and RSSI for each network found
     st += "<li>";
     st += WiFi.SSID(i);
@@ -894,22 +894,16 @@ void setupAP(void) {
   Serial.print(ssid);
 
   Serial.println("Done.");
+  blink(5, 100);
 }
 
+// blink
+void blink(void) { blink(1, 30, 30); }
 
-//blink
-void blink (void) {
-  blink(1, 30, 30);
-}
+void blink(int times) { blink(times, 40, 40); }
 
-void blink (int times) {
-  blink(times, 40, 40);
-}
-
-void blink (int times, int milisec) {
-  blink(times, milisec, milisec);
-}
-void blink (int times, int himilisec, int lowmilisec) {
+void blink(int times, int milisec) { blink(times, milisec, milisec); }
+void blink(int times, int himilisec, int lowmilisec) {
   for (int i = 0; i < times; i++) {
     digitalWrite(BUILTINLED, LOW);
     delay(lowmilisec);
