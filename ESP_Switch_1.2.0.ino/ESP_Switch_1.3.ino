@@ -21,11 +21,11 @@ WiFiClient client;
 PubSubClient mqClient(client);
 
 // Vcc measurement
-ADC_MODE(ADC_VCC);
+// ADC_MODE(ADC_VCC);
 
 // APP
-String FIRM_VER = "1.3.8";
-String SENSOR = "PIR, DHT11"; // BMP180, HTU21, DHT11
+String FIRM_VER = "1.4.0";
+String SENSOR = "PIR,RGB"; // BMP180, HTU21, DHT11
 
 String app_id;
 float vcc;
@@ -35,8 +35,18 @@ String apSsid;
 int rssi;
 String ssid;
 
-float humd;
-float temp;
+// DHT
+float humd = NULL;
+float temp = NULL;
+
+// RGB
+int redPin = 13;
+int greenPin = 12;
+int bluePin = 14;
+
+int red = 1024;
+int green = 1024;
+int blue = 500;
 
 // CONF
 char deviceName[100] = "ESP";
@@ -67,13 +77,13 @@ int lastTime = millis();
 
 // StaticJsonBuffer<500> jsonBuffer;
 
-int BUILTINLED = 13;
-int RELEY = 12;
-int GPIO_IN = 14;
-#define BUTTON 0
+int BUILTINLED = 2;
+int RELEY = 5;
+int GPIO_IN = 4;
+int BUTTON = 0;
 
 // DHT
-#define DHTPIN 13
+#define DHTPIN 16
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -89,6 +99,15 @@ void setup() { //------------------------------------------------
 
   digitalWrite(RELEY, LOW);
   digitalWrite(BUILTINLED, LOW);
+
+  // RGB
+  pinMode(redPin, OUTPUT);
+  pinMode(greenPin, OUTPUT);
+  pinMode(bluePin, OUTPUT);
+
+  analogWrite(redPin, 1024);
+  analogWrite(greenPin, 1024);
+  analogWrite(bluePin, 1024);
 
   blink(1, 500);
   dht.begin();
@@ -240,13 +259,18 @@ void loop() {
   if (BUTTON < 100)
     buttonState = digitalRead(BUTTON);
 
-  vcc = ESP.getVcc() / 1000.00;
-  // vcc = analogRead(A0);
+  // vcc = ESP.getVcc() / 1000.00;
+  vcc = analogRead(A0);
 
   delay(100);
-  humd = dht.readHumidity();
+  float humd1 = dht.readHumidity();
   delay(100);
-  temp = dht.readTemperature();
+  float temp1 = dht.readTemperature();
+
+  if (String(humd1) != "nan" && String(temp1) != "nan") {
+    humd = humd1;
+    temp = temp1;
+  }
 
   delay(100);
 
@@ -257,18 +281,23 @@ void loop() {
       digitalWrite(BUILTINLED, LOW);
 
       buttonPressed = false;
-      String sensorData =
-          "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
+      String sensorData = "";
+
+      if (humd != NULL && temp != NULL)
+        sensorData = "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
 
       if (!requestSent) {
         sendRequest(sensorData);
         requestSent = true;
+        fadeIn();
       }
       lastTime = millis();
     }
     if (millis() > lastTime + timeOut && !buttonPressed && inputState != HIGH) {
       digitalWrite(RELEY, LOW);
       digitalWrite(BUILTINLED, HIGH);
+      if (requestSent)
+        fadeOut();
       requestSent = false;
     }
   }
@@ -666,6 +695,85 @@ void createWebServer() {
     delay(5000);
   });
 
+  server.on("/rgb", HTTP_POST, []() {
+    blink();
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject &root = jsonBuffer.parseObject(server.arg("plain"));
+    Serial.print(F("\nSetting RGB led... "));
+
+    String red1 = root["red"];
+    red = red1.toInt();
+    String green1 = root["green"];
+    green = green1.toInt();
+    String blue1 = root["blue"];
+    blue = blue1.toInt();
+
+    red = red + 450;
+    if (red > 1024)
+      red = 1024;
+
+    analogWrite(redPin, red);
+    analogWrite(greenPin, green);
+    analogWrite(bluePin, blue);
+
+    Serial.println(F("\nRGB is set..."));
+    root["rc"] = 0;
+    root["msg"] = "New RGB value are set.";
+
+    String content;
+    root.printTo(content);
+    server.send(200, "application/json", content);
+  });
+
+  server.on("/rgb", HTTP_GET, []() {
+    blink();
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject &root = jsonBuffer.createObject();
+    Serial.println(F("\nRGB..."));
+
+    root["red"] = red;
+    root["green"] = green;
+    root["blue"] = blue;
+
+    root["rc"] = 0;
+
+    String content;
+    root.printTo(content);
+    server.send(200, "application/json", content);
+  });
+
+  server.on("/fadeIn", HTTP_GET, []() {
+    blink();
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject &root = jsonBuffer.parseObject(server.arg("plain"));
+    Serial.println(F("\nFading in..."));
+
+    fadeIn();
+
+    root["rc"] = 0;
+    root["msg"] = "Fading in...";
+
+    String content;
+    root.printTo(content);
+    server.send(200, "application/json", content);
+  });
+
+  server.on("/fadeOut", HTTP_GET, []() {
+    blink();
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject &root = jsonBuffer.parseObject(server.arg("plain"));
+
+    Serial.println(F("\nFading out..."));
+    fadeOut();
+
+    root["rc"] = 0;
+    root["msg"] = "Fading out...";
+
+    String content;
+    root.printTo(content);
+    server.send(200, "application/json", content);
+  });
+
   server.begin();
   Serial.println("Server started");
 
@@ -920,4 +1028,84 @@ String getMac() {
     result += String(mac[i], 16);
   }
   return result;
+}
+
+// RGB
+int fadeSpeed = 5;
+int fadeStep = 2;
+
+void fadeIn() {
+  int redx, greenx, bluex;
+  redx = greenx = bluex = 1024;
+
+  for (int i = 1024; i >= 0; i--) {
+
+    if (redx >= red) {
+      redx = redx - fadeStep;
+    }
+    if (redx <= 0)
+      redx = 0;
+    if (redx > 1024)
+      redx = 1024;
+    if (greenx >= green) {
+      greenx = greenx - fadeStep;
+    }
+    if (greenx <= 0)
+      greenx = 0;
+    if (greenx > 1024)
+      greenx = 1024;
+    if (bluex >= blue) {
+      bluex = bluex - fadeStep;
+    }
+    if (bluex <= 0)
+      bluex = 0;
+    if (bluex > 1024)
+      bluex = 1024;
+
+    int redcorect = redx + 500;
+    if (redcorect > 1024)
+      redcorect = 1024;
+
+    analogWrite(redPin, redcorect);
+    analogWrite(greenPin, greenx);
+    analogWrite(bluePin, bluex);
+
+    delay(fadeSpeed);
+    if (greenx <= green && redx <= red && bluex <= blue)
+      break;
+  }
+}
+
+void fadeOut() {
+  if (red == 1024 && green == 1024 && blue == 1024)
+    return;
+
+  int redx = red;
+  int greenx = green;
+  int bluex = blue;
+
+  for (int i = 0; i <= 1024; i++) {
+    redx = redx + fadeStep;
+    if (redx >= 1024)
+      redx = 1024;
+
+    greenx = greenx + fadeStep;
+    if (greenx >= 1024)
+      greenx = 1024;
+
+    bluex = bluex + fadeStep;
+    if (bluex >= 1024)
+      bluex = 1024;
+
+    int redcorect = redx + 500;
+    if (redcorect > 1024)
+      redcorect = 1024;
+
+    analogWrite(redPin, redx);
+    analogWrite(greenPin, greenx);
+    analogWrite(bluePin, bluex);
+    delay(fadeSpeed);
+    if (greenx >= 1024 && redx >= 1024 && bluex >= 1024)
+      break;
+  }
 }
