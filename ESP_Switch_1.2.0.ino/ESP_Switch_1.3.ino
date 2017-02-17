@@ -3,6 +3,7 @@
 #include <FS.h>
 
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
 #include <PubSubClient.h>
 
 // needed for library
@@ -15,6 +16,20 @@
 #include <ArduinoJson.h>
 #include <DHT.h>
 
+void fadeIn();
+void fadeOut();
+void blink();
+void blink(int);
+void blink(int, int);
+void blink(int, int, int);
+void readFS();
+bool testWifi();
+void setupAP();
+void sendRequest();
+void saveConfig(JsonObject &json);
+void mqPublish(String);
+void createWebServer();
+
 ESP8266WebServer server(80);
 
 WiFiClient client;
@@ -24,10 +39,10 @@ PubSubClient mqClient(client);
 // ADC_MODE(ADC_VCC);
 
 // APP
-String FIRM_VER = "1.4.0";
+String FIRM_VER = "1.4.1";
 String SENSOR = "PIR,RGB"; // BMP180, HTU21, DHT11
 
-String app_id;
+String app_id = "";
 float vcc;
 long startTime;
 String espIp;
@@ -163,7 +178,17 @@ void setup() { //------------------------------------------------
     mqClient.setServer(mqttAddress, mqttPort);
     mqClient.setCallback(mqCallback);
   }
-}
+
+  if (!MDNS.begin(app_id.c_str())) {
+    Serial.println("Error setting up MDNS responder!");
+
+  } else {
+    Serial.println("mDNS responder started");
+  }
+
+  // Add service to MDNS-SD
+  MDNS.addService("http", "tcp", 80);
+} //--
 
 void readFS() {
   // read configuration from FS json
@@ -287,9 +312,9 @@ void loop() {
         sensorData = "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
 
       if (!requestSent) {
+        fadeIn();
         sendRequest(sensorData);
         requestSent = true;
-        fadeIn();
       }
       lastTime = millis();
     }
@@ -343,7 +368,7 @@ void createWebServer() {
                espIp + "/switch/on </a>";
     content += "<br>GET: <a href='http://" + espIp + "/switch/off'>http://" +
                espIp + "/switch/off </a>";
-    content += "<br>GET: <a href='http://" + espIp + "/switch/status'>http://" +
+    content += "<br>GET: <a href='http://" + espIp + "/status'>http://" +
                espIp + "/status </a>";
     content += "<br>GET: <a href='http://" + espIp + "/update'>http://" +
                espIp + "/update </a>";
@@ -428,6 +453,7 @@ void createWebServer() {
     JsonObject &meta = root.createNestedObject("meta");
     meta["version"] = FIRM_VER;
     meta["sensor"] = SENSOR;
+    meta["id"] = app_id;
     meta["adc_vcc"] = vcc;
 
     meta["ssid"] = essid;
@@ -1031,7 +1057,7 @@ String getMac() {
 }
 
 // RGB
-int fadeSpeed = 5;
+int fadeSpeed = 10;
 int fadeStep = 2;
 
 void fadeIn() {
