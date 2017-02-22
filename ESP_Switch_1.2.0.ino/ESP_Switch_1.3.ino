@@ -2,6 +2,9 @@
 
 #include <FS.h>
 
+//#include <Adafruit_INA219.h>
+#include <Wire.h>
+
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <PubSubClient.h>
@@ -39,7 +42,7 @@ PubSubClient mqClient(client);
 // ADC_MODE(ADC_VCC);
 
 // APP
-String FIRM_VER = "1.4.1";
+String FIRM_VER = "1.4.2";
 String SENSOR = "PIR,RGB"; // BMP180, HTU21, DHT11
 
 String app_id = "";
@@ -55,13 +58,16 @@ float humd = NULL;
 float temp = NULL;
 
 // RGB
-int redPin = 13;
-int greenPin = 12;
+int redPin = 14;   // 13;
+int greenPin = 14; // 12;
 int bluePin = 14;
 
 int red = 1024;
 int green = 1024;
 int blue = 500;
+
+// INA219
+// Adafruit_INA219 ina219;
 
 // CONF
 char deviceName[100] = "ESP";
@@ -108,8 +114,8 @@ void setup() { //------------------------------------------------
   Serial.println();
 
   startTime = millis();
-
-  pinMode(BUTTON, INPUT);
+  if (BUTTON < 100)
+    pinMode(BUTTON, INPUT);
   pinMode(BUILTINLED, OUTPUT);
 
   digitalWrite(RELEY, LOW);
@@ -186,6 +192,8 @@ void setup() { //------------------------------------------------
     Serial.println("mDNS responder started");
   }
 
+  // ina219.begin();
+
   // Add service to MDNS-SD
   MDNS.addService("http", "tcp", 80);
 } //--
@@ -229,6 +237,8 @@ void readFS() {
           RELEY = relley1.toInt();
           String gpioIn1 = jsonConfig["sensorInPin"];
           GPIO_IN = gpioIn1.toInt();
+          String button1 = jsonConfig["buttonPin"];
+          BUTTON = button1.toInt();
           String builtInLed1 = jsonConfig["statusLed"];
           BUILTINLED = builtInLed1.toInt();
 
@@ -344,6 +354,31 @@ void loop() {
   //  mqPublish("Hi there!");
   delay(100);
 
+  // float shuntvoltage = 0;
+  // float busvoltage = 0;
+  // float current_mA = 0;
+  // float loadvoltage = 0;
+  //
+  // shuntvoltage = ina219.getShuntVoltage_mV();
+  // busvoltage = ina219.getBusVoltage_V();
+  // current_mA = ina219.getCurrent_mA();
+  // loadvoltage = busvoltage + (shuntvoltage / 1000);
+  //
+  // Serial.print("Bus Voltage:   ");
+  // Serial.print(busvoltage);
+  // Serial.println(" V");
+  // Serial.print("Shunt Voltage: ");
+  // Serial.print(shuntvoltage);
+  // Serial.println(" mV");
+  // Serial.print("Load Voltage:  ");
+  // Serial.print(loadvoltage);
+  // Serial.println(" V");
+  // Serial.print("Current:       ");
+  // Serial.print(current_mA);
+  // Serial.println(" mA");
+  // Serial.println("");
+  // delay(1000);
+
 } //---------------------------------------------------------------
 
 // web server
@@ -454,6 +489,7 @@ void createWebServer() {
     meta["version"] = FIRM_VER;
     meta["sensor"] = SENSOR;
     meta["id"] = app_id;
+    meta["deviceName"] = deviceName;
     meta["adc_vcc"] = vcc;
 
     meta["ssid"] = essid;
@@ -547,6 +583,7 @@ void createWebServer() {
     root["timeOut"] = timeOut;
     root["relleyPin"] = RELEY;
     root["sensorInPin"] = GPIO_IN;
+    root["buttonPin"] = BUTTON;
     root["statusLed"] = BUILTINLED;
 
     root["mqttAddress"] = mqttAddress;
@@ -559,6 +596,8 @@ void createWebServer() {
     root["restApiPort"] = rest_port;
     root["restApiToken"] = api_token;
     root["restApiPayload"] = api_payload;
+
+    root["deviceName"] = deviceName;
 
     String content;
     root.printTo(content);
@@ -582,6 +621,8 @@ void createWebServer() {
     RELEY = relley1.toInt();
     String gpioIn1 = root["sensorInPin"];
     GPIO_IN = gpioIn1.toInt();
+    String button1 = root["buttonPin"];
+    BUTTON = button1.toInt();
     String builtInLed1 = root["statusLed"];
     BUILTINLED = builtInLed1.toInt();
 
@@ -609,6 +650,10 @@ void createWebServer() {
     api_token1.toCharArray(api_token, 200, 0);
     String api_payload1 = root["restApiPayload"].asString();
     api_payload1.toCharArray(api_payload, 400, 0);
+
+    String deviceName1 = root["deviceName"].asString();
+    if (deviceName1 != "")
+      deviceName1.toCharArray(deviceName, 200, 0);
 
     root.printTo(Serial);
 
