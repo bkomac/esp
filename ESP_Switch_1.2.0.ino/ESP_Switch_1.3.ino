@@ -42,7 +42,7 @@ PubSubClient mqClient(client);
 // ADC_MODE(ADC_VCC);
 
 // APP
-String FIRM_VER = "1.4.2";
+String FIRM_VER = "1.4.3";
 String SENSOR = "PIR,RGB"; // BMP180, HTU21, DHT11
 
 String app_id = "";
@@ -96,8 +96,6 @@ boolean buttonPressed = false;
 boolean requestSent = false;
 int lastTime = millis();
 
-// StaticJsonBuffer<500> jsonBuffer;
-
 int BUILTINLED = 2;
 int RELEY = 5;
 int GPIO_IN = 4;
@@ -111,7 +109,8 @@ DHT dht(DHTPIN, DHTTYPE);
 void setup() { //------------------------------------------------
   // put your setup code here, to run once:
   Serial.begin(115200);
-  Serial.println();
+  Serial.println("Setup ...");
+  delay(300);
 
   startTime = millis();
   if (BUTTON < 100)
@@ -154,15 +153,26 @@ void setup() { //------------------------------------------------
   if (GPIO_IN < 100)
     pinMode(GPIO_IN, INPUT);
 
-  if (essid != "") {
+  if (String(essid) != "" && String(essid) != "nan") {
     Serial.print("SID found. Trying to connect to ");
     Serial.print(essid);
     Serial.println("");
     WiFi.begin(essid, epwd);
     delay(100);
   }
+
   if (!testWifi())
     setupAP();
+  else {
+    if (!MDNS.begin(app_id.c_str())) {
+      Serial.println("Error setting up MDNS responder!");
+
+    } else {
+      Serial.println("mDNS responder started");
+      // Add service to MDNS-SD
+      MDNS.addService("http", "tcp", 80);
+    }
+  }
 
   ssid = WiFi.SSID();
   Serial.print(F("\nconnected to "));
@@ -185,17 +195,8 @@ void setup() { //------------------------------------------------
     mqClient.setCallback(mqCallback);
   }
 
-  if (!MDNS.begin(app_id.c_str())) {
-    Serial.println("Error setting up MDNS responder!");
-
-  } else {
-    Serial.println("mDNS responder started");
-  }
-
   // ina219.begin();
 
-  // Add service to MDNS-SD
-  MDNS.addService("http", "tcp", 80);
 } //--
 
 void readFS() {
@@ -271,6 +272,8 @@ void readFS() {
           Serial.println(F("failed to load json config"));
         }
       }
+    } else {
+      Serial.println(F("Config file doesn't exist yet!"));
     }
   } else {
     Serial.println(F("failed to mount FS"));
@@ -284,6 +287,7 @@ void loop() {
   delay(10);
   rssi = WiFi.RSSI();
 
+  Serial.println(F("Handle client..."));
   server.handleClient();
 
   int inputState = LOW;
@@ -384,8 +388,9 @@ void loop() {
 // web server
 void createWebServer() {
   Serial.println(F("Starting server..."));
-  Serial.println(F("REST handlers init..."));
   yield();
+  Serial.println(F("REST handlers init..."));
+
   server.on("/", []() {
     blink();
     String content;
@@ -395,7 +400,7 @@ void createWebServer() {
     content += "<p>IP: " + espIp + "</p>";
     content += "<p>MAC/AppId: " + app_id + "</p>";
     content += "<p>Version: " + FIRM_VER + "</p>";
-    content += "<p>Vcc: " + String(vcc) + " V</p>";
+    content += "<p>ADC: " + String(vcc) + "</p>";
     content += "<br><p><b>REST API: </b>";
     content += "<br>GET: <a href='http://" + espIp + "/switch/auto'>http://" +
                espIp + "/switch/auto </a>";
@@ -1010,14 +1015,14 @@ bool testWifi() {
     }
     blink(1, 200);
     delay(500);
-    Serial.print(F("Retrying to connect to WiFi... "));
+    Serial.print(F("Retrying to connect to WiFi ssid: "));
     Serial.print(essid);
     Serial.print(F(" status="));
     Serial.println(WiFi.status());
     c++;
   }
   Serial.println(F(""));
-  Serial.println(F("Connect timed out"));
+  Serial.println(F("Connect timed out."));
 
   blink(20, 30);
   delay(1000);
@@ -1028,51 +1033,43 @@ bool testWifi() {
 }
 
 void setupAP(void) {
-  Serial.print("Setting up access point. WiFi.mode= ");
+  Serial.print(F("Setting up access point. WiFi.mode= "));
   Serial.println(WIFI_STA);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+
   delay(100);
   int n = WiFi.scanNetworks();
-  Serial.println("Scanning network done");
+  Serial.println(F("Scanning network done."));
   if (n == 0)
-    Serial.println("No networks found");
+    Serial.println(F("No networks found."));
   else {
     Serial.print(n);
-    Serial.println(" networks found");
-    Serial.println("---------------------------------");
+    Serial.println(F(" networks found"));
+    Serial.println(F("---------------------------------"));
     for (int i = 0; i < n; ++i) {
       // Print SSID and RSSI for each network found
       Serial.print(i + 1);
-      Serial.print(": ");
+      Serial.print(F(": "));
       Serial.print(WiFi.SSID(i));
-      Serial.print(" (");
+      Serial.print(F(" ("));
       Serial.print(WiFi.RSSI(i));
-      Serial.print(")");
+      Serial.print(F(")"));
       Serial.println((WiFi.encryptionType(i) == ENC_TYPE_NONE) ? " " : "*");
       delay(10);
     }
   }
   Serial.println("");
-  String st = "<ol>";
-  for (int i = 0; i < n; ++i) {
-    // Print SSID and RSSI for each network found
-    st += "<li>";
-    st += WiFi.SSID(i);
-    st += " (";
-    st += WiFi.RSSI(i);
-    st += ")";
-    st += (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? " " : "*";
-    st += "</li>";
-  }
-  st += "</ol>";
   delay(100);
 
   WiFi.softAP(apSsid.c_str());
-  Serial.print("SoftAP ready. SID: ");
-  Serial.print(ssid);
+  Serial.print(F("SoftAP ready. AP SID: "));
+  Serial.print(apSsid);
 
-  Serial.println("Done.");
+  IPAddress apip = WiFi.softAPIP();
+  Serial.print(F(", AP IP address: "));
+  Serial.println(apip);
+  espIp = String(apip);
   blink(5, 100);
 }
 
