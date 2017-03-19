@@ -19,6 +19,8 @@
 #include <ArduinoJson.h>
 #include <DHT.h>
 
+#include <LiquidCrystal_PCF8574.h>
+
 void fadeIn();
 void fadeOut();
 void blink();
@@ -39,14 +41,14 @@ WiFiClient client;
 PubSubClient mqClient(client);
 
 // Vcc measurement
-// ADC_MODE(ADC_VCC);
+ADC_MODE(ADC_VCC);
 
 // APP
-String FIRM_VER = "1.4.3";
-String SENSOR = "PIR,RGB"; // BMP180, HTU21, DHT11
+String FIRM_VER = "1.4.5";
+String SENSOR = "DHT11"; // BMP180, HTU21, DHT11
 
 String app_id = "";
-float vcc;
+float adc;
 long startTime;
 String espIp;
 String apSsid;
@@ -58,13 +60,16 @@ float humd = NULL;
 float temp = NULL;
 
 // RGB
-int redPin = 14;   // 13;
-int greenPin = 14; // 12;
-int bluePin = 14;
+int redPin = 16;   // 13;
+int greenPin = 16; // 12;
+int bluePin = 16;
 
 int red = 1024;
 int green = 1024;
 int blue = 500;
+
+// LCD
+LiquidCrystal_PCF8574 lcd(0x3F);
 
 // INA219
 // Adafruit_INA219 ina219;
@@ -72,8 +77,8 @@ int blue = 500;
 // CONF
 char deviceName[100] = "ESP";
 
-char essid[40] = "";
-char epwd[40] = "";
+char essid[40] = "iottest";
+char epwd[40] = "esptest123";
 
 String MODE = "AUTO";
 int timeOut = 5000;
@@ -81,7 +86,8 @@ int timeOut = 5000;
 // mqtt config
 char mqttAddress[200] = "";
 int mqttPort = 1883;
-char mqttTopic[200] = "iot/sensor";
+char mqttPublishTopic[200] = "iot/sensor";
+char mqttSuscribeTopic[200] = "iot/sensor";
 
 // REST API CONFIG
 char rest_server[40] = "";
@@ -102,8 +108,8 @@ int GPIO_IN = 4;
 int BUTTON = 0;
 
 // DHT
-#define DHTPIN 16
-#define DHTTYPE DHT11
+#define DHTPIN 14
+#define DHTTYPE DHT22 // DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
 void setup() { //------------------------------------------------
@@ -190,104 +196,38 @@ void setup() { //------------------------------------------------
   createWebServer();
 
   // MQTT
-  if (mqttAddress != "") {
+  if (String(mqttAddress) != "") {
+    Serial.print(F("Seting mqtt server and callback... "));
     mqClient.setServer(mqttAddress, mqttPort);
     mqClient.setCallback(mqCallback);
+    mqReconnect();
   }
 
   // ina219.begin();
 
-} //--
+  // LCD
+  Wire.begin();
+  Wire.beginTransmission(0x3F);
+  int error = Wire.endTransmission();
+  Serial.print("LCD status: ");
+  Serial.println(error);
 
-void readFS() {
-  // read configuration from FS json
-  Serial.println(F("mounting FS..."));
-
-  if (SPIFFS.begin()) {
-    Serial.println(F("mounted file system"));
-    if (SPIFFS.exists("/config.json")) {
-      // file exists, reading and loading
-      Serial.println(F("reading config file"));
-      File configFile = SPIFFS.open("/config.json", "r");
-      if (configFile) {
-        Serial.println(F("opened config file"));
-        size_t size = configFile.size();
-        // Allocate a buffer to store contents of the file.
-        std::unique_ptr<char[]> buf(new char[size]);
-
-        configFile.readBytes(buf.get(), size);
-        DynamicJsonBuffer jsonBuffer;
-        JsonObject &jsonConfig = jsonBuffer.parseObject(buf.get());
-        jsonConfig.printTo(Serial);
-        if (jsonConfig.success()) {
-          Serial.println(F("\nparsed json"));
-
-          // config parameters
-          String ssid1 = jsonConfig["ssid"].asString();
-          ssid1.toCharArray(essid, 40, 0);
-          String pwd1 = jsonConfig["password"].asString();
-          pwd1.toCharArray(epwd, 40, 0);
-
-          String deviceName1 = jsonConfig["deviceName"].asString();
-          if (deviceName1 != "")
-            deviceName1.toCharArray(deviceName, 200, 0);
-
-          String timeOut1 = jsonConfig["timeOut"];
-          timeOut = timeOut1.toInt();
-          String relley1 = jsonConfig["relleyPin"];
-          RELEY = relley1.toInt();
-          String gpioIn1 = jsonConfig["sensorInPin"];
-          GPIO_IN = gpioIn1.toInt();
-          String button1 = jsonConfig["buttonPin"];
-          BUTTON = button1.toInt();
-          String builtInLed1 = jsonConfig["statusLed"];
-          BUILTINLED = builtInLed1.toInt();
-
-          String mqttAddress1 = jsonConfig["mqttAddress"].asString();
-          mqttAddress1.toCharArray(mqttAddress, 200, 0);
-          String mqttPort1 = jsonConfig["mqttPort"];
-          mqttPort = mqttPort1.toInt();
-          String mqttTopic1 = jsonConfig["mqttTopic"].asString();
-          mqttTopic1.toCharArray(mqttTopic, 200, 0);
-
-          String rest_server1 = jsonConfig["restApiServer"].asString();
-          rest_server1.toCharArray(rest_server, 40, 0);
-
-          String rest_ssl1 = jsonConfig["restApiSSL"];
-          if (rest_ssl1 == "true")
-            rest_ssl = true;
-          else
-            rest_ssl = false;
-
-          String rest_path1 = jsonConfig["restApiPath"].asString();
-          rest_path1.toCharArray(rest_path, 200, 0);
-          String rest_port1 = jsonConfig["restApiPort"];
-          rest_port = rest_port1.toInt();
-          String api_token1 = jsonConfig["restApiToken"].asString();
-          api_token1.toCharArray(api_token, 200, 0);
-          String api_payload1 = jsonConfig["restApiPayload"].asString();
-          api_payload1.toCharArray(api_payload, 400, 0);
-
-        } else {
-          Serial.println(F("failed to load json config"));
-        }
-      }
-    } else {
-      Serial.println(F("Config file doesn't exist yet!"));
-    }
-  } else {
-    Serial.println(F("failed to mount FS"));
-    blink(10, 50, 20);
+  if (error == 0) {
+    lcd.begin(20, 4);
+    lcd.home();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.setBacklight(255);
+    lcd.print("Starting LCD ...");
   }
-  // end read
-}
+
+} //--
 
 // loop ----------------------------------------------------------
 void loop() {
   delay(10);
   rssi = WiFi.RSSI();
 
-  Serial.println(F("Handle client..."));
   server.handleClient();
 
   int inputState = LOW;
@@ -298,8 +238,8 @@ void loop() {
   if (BUTTON < 100)
     buttonState = digitalRead(BUTTON);
 
-  // vcc = ESP.getVcc() / 1000.00;
-  vcc = analogRead(A0);
+  adc = ESP.getVcc() / 1000.00;
+  // adc = analogRead(A0);
 
   delay(100);
   float humd1 = dht.readHumidity();
@@ -309,9 +249,17 @@ void loop() {
   if (String(humd1) != "nan" && String(temp1) != "nan") {
     humd = humd1;
     temp = temp1;
+
+    Serial.print(F("\nTemperature: "));
+    Serial.print(temp);
+    Serial.print(F("\nHumidity: "));
+    Serial.println(humd);
   }
 
   delay(100);
+  String sensorData = "";
+  if (humd != NULL && temp != NULL)
+    sensorData = "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
 
   if (MODE == "AUTO") {
     if (inputState == HIGH) {
@@ -320,13 +268,10 @@ void loop() {
       digitalWrite(BUILTINLED, LOW);
 
       buttonPressed = false;
-      String sensorData = "";
-
-      if (humd != NULL && temp != NULL)
-        sensorData = "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
 
       if (!requestSent) {
         fadeIn();
+        blink();
         sendRequest(sensorData);
         requestSent = true;
       }
@@ -338,6 +283,9 @@ void loop() {
       if (requestSent)
         fadeOut();
       requestSent = false;
+      blink();
+      sendRequest(sensorData);
+      lastTime = millis();
     }
   }
 
@@ -354,8 +302,11 @@ void loop() {
     }
     delay(300);
   }
-  //  mqClient.subscribe(String(mqttTopic).c_str());
-  //  mqPublish("Hi there!");
+
+  // MQTT client
+  if (String(mqttSuscribeTopic) != "")
+    mqClient.loop();
+
   delay(100);
 
   // float shuntvoltage = 0;
@@ -400,7 +351,7 @@ void createWebServer() {
     content += "<p>IP: " + espIp + "</p>";
     content += "<p>MAC/AppId: " + app_id + "</p>";
     content += "<p>Version: " + FIRM_VER + "</p>";
-    content += "<p>ADC: " + String(vcc) + "</p>";
+    content += "<p>ADC: " + String(adc) + "</p>";
     content += "<br><p><b>REST API: </b>";
     content += "<br>GET: <a href='http://" + espIp + "/switch/auto'>http://" +
                espIp + "/switch/auto </a>";
@@ -495,7 +446,7 @@ void createWebServer() {
     meta["sensor"] = SENSOR;
     meta["id"] = app_id;
     meta["deviceName"] = deviceName;
-    meta["adc_vcc"] = vcc;
+    meta["adc_vcc"] = adc;
 
     meta["ssid"] = essid;
     meta["rssi"] = rssi;
@@ -593,7 +544,8 @@ void createWebServer() {
 
     root["mqttAddress"] = mqttAddress;
     root["mqttPort"] = mqttPort;
-    root["mqttTopic"] = mqttTopic;
+    root["mqttPublishTopic"] = mqttPublishTopic;
+    root["mqttSuscribeTopic"] = mqttSuscribeTopic;
 
     root["restApiServer"] = rest_server;
     root["restApiSSL"] = rest_ssl;
@@ -635,8 +587,10 @@ void createWebServer() {
     mqttAddress1.toCharArray(mqttAddress, 200, 0);
     String mqttPort1 = root["mqttPort"];
     mqttPort = mqttPort1.toInt();
-    String mqttTopic1 = root["mqttTopic"].asString();
-    mqttTopic1.toCharArray(mqttTopic, 200, 0);
+    String mqttPubTopic1 = root["mqttPublishTopic"].asString();
+    mqttPubTopic1.toCharArray(mqttPublishTopic, 200, 0);
+    String mqttSusTopic1 = root["mqttSuscribeTopic"].asString();
+    mqttSusTopic1.toCharArray(mqttSuscribeTopic, 200, 0);
 
     String rest_server1 = root["restApiServer"].asString();
     rest_server1.toCharArray(rest_server, 40, 0);
@@ -864,7 +818,7 @@ void sendRequest(String sensorData) {
   String data = "{" + api_payload_s + "\"sensor\":{\"sensor_type\":\"" +
                 SENSOR + "\", \"data\":{" + sensorData + "}" + ", \"ver\":\"" +
                 FIRM_VER + "\"" + ", \"ip\":\"" + espIp + "\"" + ", \"id\":\"" +
-                app_id + "\"" + ", \"vcc\":" + vcc + "}}";
+                app_id + "\"" + ", \"adc\":" + adc + "}}";
 
   // REST request
   if (String(rest_server) != "") {
@@ -921,7 +875,7 @@ void sendRequest(String sensorData) {
   }
 
   // MQTT publish
-  if (String(mqttAddress) != "") {
+  if (String(mqttAddress) != "" && String(mqttPublishTopic) != "") {
     Serial.println();
     Serial.println(F("MQTT publish..."));
 
@@ -950,11 +904,31 @@ void mqCallback(char *topic, byte *payload, unsigned int length) {
   Serial.print(F("Message arrived ["));
   Serial.print(topic);
   Serial.print(F("] "));
+  String msg = "";
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
+    msg = msg + (char)payload[i];
   }
   Serial.println();
   blink(3, 50);
+
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject &rootMqtt = jsonBuffer.parseObject(msg);
+
+  String temp = rootMqtt["sensor"]["data"]["temp"].asString();
+  String hum = rootMqtt["sensor"]["data"]["hum"].asString();
+
+  lcd.setBacklight(255);
+  /*lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("MQTT msg arrived...");
+  delay(1000);
+  lcd.clear();
+  */
+  lcd.setCursor(0, 0);
+  lcd.print("Temperatura: " + temp + " C");
+  lcd.setCursor(0, 1);
+  lcd.print("Vlaga: " + hum + " %");
 }
 
 bool mqReconnect() {
@@ -964,8 +938,10 @@ bool mqReconnect() {
     Serial.print(mqttAddress);
     Serial.print(F(":"));
     Serial.print(mqttPort);
-    Serial.print(F(" "));
-    Serial.print(mqttTopic);
+    Serial.print(F(" Pub: "));
+    Serial.print(mqttPublishTopic);
+    Serial.print(F(", Sub: "));
+    Serial.print(mqttSuscribeTopic);
 
     yield();
     // Attempt to connect
@@ -973,6 +949,11 @@ bool mqReconnect() {
       yield();
       Serial.print(F("\nconnected with cid: "));
       Serial.println(app_id);
+
+      // suscribe
+      if (String(mqttSuscribeTopic) != "")
+        mqClient.subscribe(String(mqttSuscribeTopic).c_str());
+
       return true;
     } else {
       Serial.print(F("\nfailed to connect!"));
@@ -991,10 +972,10 @@ void mqPublish(String msg) {
     // mqClient.loop();
 
     Serial.print(F("\nPublish message to topic '"));
-    Serial.print(mqttTopic);
+    Serial.print(mqttPublishTopic);
     Serial.print(F("':"));
     Serial.println(msg);
-    mqClient.publish(String(mqttTopic).c_str(), msg.c_str());
+    mqClient.publish(String(mqttPublishTopic).c_str(), msg.c_str());
 
   } else {
     Serial.print(F("\nPublish failed!"));
@@ -1071,6 +1052,91 @@ void setupAP(void) {
   Serial.println(apip);
   espIp = String(apip);
   blink(5, 100);
+}
+
+void readFS() {
+  // read configuration from FS json
+  Serial.println(F("mounting FS..."));
+
+  if (SPIFFS.begin()) {
+    Serial.println(F("mounted file system"));
+    if (SPIFFS.exists("/config.json")) {
+      // file exists, reading and loading
+      Serial.println(F("reading config file"));
+      File configFile = SPIFFS.open("/config.json", "r");
+      if (configFile) {
+        Serial.println(F("opened config file"));
+        size_t size = configFile.size();
+        // Allocate a buffer to store contents of the file.
+        std::unique_ptr<char[]> buf(new char[size]);
+
+        configFile.readBytes(buf.get(), size);
+        DynamicJsonBuffer jsonBuffer;
+        JsonObject &jsonConfig = jsonBuffer.parseObject(buf.get());
+        jsonConfig.printTo(Serial);
+        if (jsonConfig.success()) {
+          Serial.println(F("\nparsed json"));
+
+          // config parameters
+          String ssid1 = jsonConfig["ssid"].asString();
+          ssid1.toCharArray(essid, 40, 0);
+          String pwd1 = jsonConfig["password"].asString();
+          pwd1.toCharArray(epwd, 40, 0);
+
+          String deviceName1 = jsonConfig["deviceName"].asString();
+          if (deviceName1 != "")
+            deviceName1.toCharArray(deviceName, 200, 0);
+
+          String timeOut1 = jsonConfig["timeOut"];
+          timeOut = timeOut1.toInt();
+          String relley1 = jsonConfig["relleyPin"];
+          RELEY = relley1.toInt();
+          String gpioIn1 = jsonConfig["sensorInPin"];
+          GPIO_IN = gpioIn1.toInt();
+          String button1 = jsonConfig["buttonPin"];
+          BUTTON = button1.toInt();
+          String builtInLed1 = jsonConfig["statusLed"];
+          BUILTINLED = builtInLed1.toInt();
+
+          String mqttAddress1 = jsonConfig["mqttAddress"].asString();
+          mqttAddress1.toCharArray(mqttAddress, 200, 0);
+          String mqttPort1 = jsonConfig["mqttPort"];
+          mqttPort = mqttPort1.toInt();
+          String mqttPubTopic1 = jsonConfig["mqttPublishTopic"].asString();
+          mqttPubTopic1.toCharArray(mqttPublishTopic, 200, 0);
+          String mqttSusTopic1 = jsonConfig["mqttSuscribeTopic"].asString();
+          mqttSusTopic1.toCharArray(mqttSuscribeTopic, 200, 0);
+
+          String rest_server1 = jsonConfig["restApiServer"].asString();
+          rest_server1.toCharArray(rest_server, 40, 0);
+
+          String rest_ssl1 = jsonConfig["restApiSSL"];
+          if (rest_ssl1 == "true")
+            rest_ssl = true;
+          else
+            rest_ssl = false;
+
+          String rest_path1 = jsonConfig["restApiPath"].asString();
+          rest_path1.toCharArray(rest_path, 200, 0);
+          String rest_port1 = jsonConfig["restApiPort"];
+          rest_port = rest_port1.toInt();
+          String api_token1 = jsonConfig["restApiToken"].asString();
+          api_token1.toCharArray(api_token, 200, 0);
+          String api_payload1 = jsonConfig["restApiPayload"].asString();
+          api_payload1.toCharArray(api_payload, 400, 0);
+
+        } else {
+          Serial.println(F("failed to load json config"));
+        }
+      }
+    } else {
+      Serial.println(F("Config file doesn't exist yet!"));
+    }
+  } else {
+    Serial.println(F("failed to mount FS"));
+    blink(10, 50, 20);
+  }
+  // end read
 }
 
 // blink
