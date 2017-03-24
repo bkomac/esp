@@ -41,11 +41,12 @@ WiFiClient client;
 PubSubClient mqClient(client);
 
 // Vcc measurement
-ADC_MODE(ADC_VCC);
+// ADC_MODE(ADC_VCC);
+int lightTreshold = 50; // 0 - dark, >100 - light
 
 // APP
-String FIRM_VER = "1.4.5";
-String SENSOR = "DHT11"; // BMP180, HTU21, DHT11
+String FIRM_VER = "1.4.6";
+String SENSOR = "PIR"; // BMP180, HTU21, DHT11
 
 String app_id = "";
 float adc;
@@ -206,20 +207,20 @@ void setup() { //------------------------------------------------
   // ina219.begin();
 
   // LCD
-  Wire.begin();
-  Wire.beginTransmission(0x3F);
-  int error = Wire.endTransmission();
-  Serial.print("LCD status: ");
-  Serial.println(error);
+  /*  Wire.begin();
+    Wire.beginTransmission(0x3F);
+    int error = Wire.endTransmission();
+    Serial.print("LCD status: ");
+    Serial.println(error);
 
-  if (error == 0) {
-    lcd.begin(20, 4);
-    lcd.home();
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.setBacklight(255);
-    lcd.print("Starting LCD ...");
-  }
+    if (error == 0) {
+      lcd.begin(20, 4);
+      lcd.home();
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.setBacklight(255);
+      lcd.print("Starting LCD ...");
+    }*/
 
 } //--
 
@@ -238,15 +239,19 @@ void loop() {
   if (BUTTON < 100)
     buttonState = digitalRead(BUTTON);
 
-  adc = ESP.getVcc() / 1000.00;
-  // adc = analogRead(A0);
+  // adc = ESP.getVcc() / 1000.00;
+  adc = analogRead(A0);
 
-  delay(100);
-  float humd1 = dht.readHumidity();
-  delay(100);
-  float temp1 = dht.readTemperature();
+  float humd1 = NULL;
+  float temp1 = NULL;
+  /*
+    delay(100);
+     humd1 = dht.readHumidity();
+    delay(100);
+     temp1 = dht.readTemperature();
+    */
 
-  if (String(humd1) != "nan" && String(temp1) != "nan") {
+  if (String(humd1) != "nan" && String(temp1) != "nan" && temp1 != NULL) {
     humd = humd1;
     temp = temp1;
 
@@ -256,7 +261,7 @@ void loop() {
     Serial.println(humd);
   }
 
-  delay(100);
+  yield();
   String sensorData = "";
   if (humd != NULL && temp != NULL)
     sensorData = "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
@@ -264,7 +269,10 @@ void loop() {
   if (MODE == "AUTO") {
     if (inputState == HIGH) {
       Serial.println(F("Sensor high..."));
-      digitalWrite(RELEY, HIGH);
+      Serial.println(adc);
+      if (adc <= lightTreshold) {
+        digitalWrite(RELEY, HIGH);
+      }
       digitalWrite(BUILTINLED, LOW);
 
       buttonPressed = false;
@@ -284,7 +292,7 @@ void loop() {
         fadeOut();
       requestSent = false;
       blink();
-      sendRequest(sensorData);
+      // sendRequest(sensorData);
       lastTime = millis();
     }
   }
@@ -541,6 +549,7 @@ void createWebServer() {
     root["sensorInPin"] = GPIO_IN;
     root["buttonPin"] = BUTTON;
     root["statusLed"] = BUILTINLED;
+    root["lightTreshold"] = lightTreshold;
 
     root["mqttAddress"] = mqttAddress;
     root["mqttPort"] = mqttPort;
@@ -582,6 +591,8 @@ void createWebServer() {
     BUTTON = button1.toInt();
     String builtInLed1 = root["statusLed"];
     BUILTINLED = builtInLed1.toInt();
+    String lightTreshold1 = root["lightTreshold"];
+    lightTreshold = lightTreshold1.toInt();
 
     String mqttAddress1 = root["mqttAddress"].asString();
     mqttAddress1.toCharArray(mqttAddress, 200, 0);
@@ -1124,6 +1135,9 @@ void readFS() {
           api_token1.toCharArray(api_token, 200, 0);
           String api_payload1 = jsonConfig["restApiPayload"].asString();
           api_payload1.toCharArray(api_payload, 400, 0);
+
+          String lightTreshold1 = jsonConfig["lightTreshold"];
+          lightTreshold = lightTreshold1.toInt();
 
         } else {
           Serial.println(F("failed to load json config"));
