@@ -45,8 +45,8 @@ PubSubClient mqClient(client);
 int lightTreshold = 50; // 0 - dark, >100 - light
 
 // APP
-String FIRM_VER = "1.4.6";
-String SENSOR = "PIR"; // BMP180, HTU21, DHT11
+String FIRM_VER = "1.4.7";
+String SENSOR = "REL"; // BMP180, HTU21, DHT11
 
 String app_id = "";
 float adc;
@@ -114,7 +114,6 @@ int BUTTON = 0;
 DHT dht(DHTPIN, DHTTYPE);
 
 void setup() { //------------------------------------------------
-  // put your setup code here, to run once:
   Serial.begin(115200);
   Serial.println("Setup ...");
   delay(300);
@@ -224,7 +223,9 @@ void setup() { //------------------------------------------------
 
 } //--
 
-// loop ----------------------------------------------------------
+// -----------------------------------------------------------------------------
+// loop ------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 void loop() {
   delay(10);
   rssi = WiFi.RSSI();
@@ -285,13 +286,16 @@ void loop() {
       }
       lastTime = millis();
     }
+
     if (millis() > lastTime + timeOut && !buttonPressed && inputState != HIGH) {
       digitalWrite(RELEY, LOW);
       digitalWrite(BUILTINLED, HIGH);
       if (requestSent)
         fadeOut();
       requestSent = false;
-      blink();
+
+      if (WiFi.status() == WL_CONNECTED)
+        blink(1, 5);
       // sendRequest(sensorData);
       lastTime = millis();
     }
@@ -1156,9 +1160,10 @@ void readFS() {
 // blink
 void blink(void) { blink(1, 30, 30); }
 
-void blink(int times) { blink(times, 40, 40); }
+void blink(int times) { blink(times, 30, 30); }
 
 void blink(int times, int milisec) { blink(times, milisec, milisec); }
+
 void blink(int times, int himilisec, int lowmilisec) {
   for (int i = 0; i < times; i++) {
     digitalWrite(BUILTINLED, LOW);
