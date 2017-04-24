@@ -19,7 +19,10 @@
 #include <ArduinoJson.h>
 #include <DHT.h>
 
-#include <LiquidCrystal_PCF8574.h>
+#include <MFRC522.h>
+#include <SPI.h>
+
+//#include <LiquidCrystal_PCF8574.h>
 
 void fadeIn();
 void fadeOut();
@@ -41,12 +44,12 @@ WiFiClient client;
 PubSubClient mqClient(client);
 
 // Vcc measurement
-// ADC_MODE(ADC_VCC);
+ADC_MODE(ADC_VCC);
 int lightTreshold = 50; // 0 - dark, >100 - light
 
 // APP
-String FIRM_VER = "1.4.7";
-String SENSOR = "REL"; // BMP180, HTU21, DHT11
+String FIRM_VER = "1.4.9";
+String SENSOR = "RC522, DHT22"; // BMP180, HTU21, DHT11
 
 String app_id = "";
 float adc;
@@ -70,7 +73,7 @@ int green = 1024;
 int blue = 500;
 
 // LCD
-LiquidCrystal_PCF8574 lcd(0x3F);
+// LiquidCrystal_PCF8574 lcd(0x3F);
 
 // INA219
 // Adafruit_INA219 ina219;
@@ -104,14 +107,19 @@ boolean requestSent = false;
 int lastTime = millis();
 
 int BUILTINLED = 2;
-int RELEY = 5;
-int GPIO_IN = 4;
-int BUTTON = 0;
+int RELEY = 500;
+int GPIO_IN = 400;
+int BUTTON = 16;
 
 // DHT
-#define DHTPIN 14
+#define DHTPIN 3
 #define DHTTYPE DHT22 // DHT11
 DHT dht(DHTPIN, DHTTYPE);
+
+// RFID RC552
+#define RST_PIN 5
+#define SS_PIN 4
+MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 void setup() { //------------------------------------------------
   Serial.begin(115200);
@@ -127,13 +135,15 @@ void setup() { //------------------------------------------------
   digitalWrite(BUILTINLED, LOW);
 
   // RGB
-  pinMode(redPin, OUTPUT);
-  pinMode(greenPin, OUTPUT);
-  pinMode(bluePin, OUTPUT);
+  if (redPin < 100 && greenPin < 100 && bluePin < 100) {
+    pinMode(redPin, OUTPUT);
+    pinMode(greenPin, OUTPUT);
+    pinMode(bluePin, OUTPUT);
 
-  analogWrite(redPin, 1024);
-  analogWrite(greenPin, 1024);
-  analogWrite(bluePin, 1024);
+    analogWrite(redPin, 1024);
+    analogWrite(greenPin, 1024);
+    analogWrite(bluePin, 1024);
+  }
 
   blink(1, 500);
   dht.begin();
@@ -203,6 +213,11 @@ void setup() { //------------------------------------------------
     mqReconnect();
   }
 
+  // RFID
+  SPI.begin();
+  mfrc522.PCD_Init();
+  mfrc522.PCD_DumpVersionToSerial();
+
   // ina219.begin();
 
   // LCD
@@ -240,17 +255,17 @@ void loop() {
   if (BUTTON < 100)
     buttonState = digitalRead(BUTTON);
 
-  // adc = ESP.getVcc() / 1000.00;
-  adc = analogRead(A0);
+  adc = ESP.getVcc() / 1000.00;
+  // adc = analogRead(A0);
 
   float humd1 = NULL;
   float temp1 = NULL;
-  /*
-    delay(100);
-     humd1 = dht.readHumidity();
-    delay(100);
-     temp1 = dht.readTemperature();
-    */
+
+  // DHT
+  delay(100);
+  humd1 = dht.readHumidity();
+  delay(100);
+  temp1 = dht.readTemperature();
 
   if (String(humd1) != "nan" && String(temp1) != "nan" && temp1 != NULL) {
     humd = humd1;
@@ -264,13 +279,18 @@ void loop() {
 
   yield();
   String sensorData = "";
+
+  // DHT
   if (humd != NULL && temp != NULL)
     sensorData = "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
+
+  // RFID
+  readRFID(sensorData);
 
   if (MODE == "AUTO") {
     if (inputState == HIGH) {
       Serial.println(F("Sensor high..."));
-      Serial.println(adc);
+      // Serial.println(adc);
       if (adc <= lightTreshold) {
         digitalWrite(RELEY, HIGH);
       }
@@ -641,11 +661,25 @@ void createWebServer() {
 
     String content;
     root.printTo(content);
+    server.sendHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers",
+                      "Origin, X-Requested-With, Content-Type, Accept");
     server.send(200, "application/json", content);
 
     if (mqttAddress != "") {
       mqClient.setServer(mqttAddress, mqttPort);
     }
+  });
+
+  server.on("/config", HTTP_OPTIONS, []() {
+    blink();
+
+    // server.sendHeader("Access-Control-Max-Age", "10000");
+    server.sendHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers",
+                      "Origin, X-Requested-With, Content-Type, Accept");
+    server.send(200, "text/plain", "");
+
   });
 
   server.on("/ssid", HTTP_GET, []() {
@@ -933,17 +967,18 @@ void mqCallback(char *topic, byte *payload, unsigned int length) {
   String temp = rootMqtt["sensor"]["data"]["temp"].asString();
   String hum = rootMqtt["sensor"]["data"]["hum"].asString();
 
-  lcd.setBacklight(255);
-  /*lcd.clear();
+  /*lcd.setBacklight(255);
+  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("MQTT msg arrived...");
   delay(1000);
   lcd.clear();
-  */
+
   lcd.setCursor(0, 0);
   lcd.print("Temperatura: " + temp + " C");
   lcd.setCursor(0, 1);
   lcd.print("Vlaga: " + hum + " %");
+  */
 }
 
 bool mqReconnect() {
@@ -1186,6 +1221,55 @@ String getMac() {
 // RGB
 int fadeSpeed = 10;
 int fadeStep = 2;
+
+// RFID
+void readRFID(String &sensorData) {
+  if (sensorData == NULL)
+    sensorData = "";
+  else
+    sensorData += ", ";
+  // Look for new cards
+  if (!mfrc522.PICC_IsNewCardPresent()) {
+    return;
+  }
+
+  // Select one of the cards
+  if (!mfrc522.PICC_ReadCardSerial()) {
+    return;
+  }
+
+  // Dump debug info about the card; PICC_HaltA() is automatically called
+  // mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
+  Serial.print(F("Card UID:"));
+  String id = dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
+  Serial.println();
+
+  sensorData += "\"rfidId\":\"" + id + "\"";
+  sendRequest(sensorData);
+}
+
+String dump_byte_array(byte *buffer, byte bufferSize) {
+
+  /*for (byte i = 0; i < bufferSize; i++) {
+    Serial.print(buffer[i] < 0x10 ? " 0" : " ");
+    Serial.print(buffer[i], HEX);
+  }*/
+
+  String val1 = String(mfrc522.uid.uidByte[0], HEX);
+  String val2 = String(mfrc522.uid.uidByte[1], HEX);
+  String val3 = String(mfrc522.uid.uidByte[2], HEX);
+  String val4 = String(mfrc522.uid.uidByte[3], HEX);
+  val1.toUpperCase();
+  val2.toUpperCase();
+  val3.toUpperCase();
+  val4.toUpperCase();
+  String uID = val1 + val2 + val3 + val4;
+
+  Serial.println();
+  Serial.print("U:");
+  Serial.println(uID);
+  return uID;
+}
 
 void fadeIn() {
   int redx, greenx, bluex;
