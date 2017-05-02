@@ -48,7 +48,7 @@ ADC_MODE(ADC_VCC);
 int lightTreshold = 50; // 0 - dark, >100 - light
 
 // APP
-String FIRM_VER = "1.4.9";
+String FIRM_VER = "1.5.1";
 String SENSOR = "RC522, DHT22"; // BMP180, HTU21, DHT11
 
 String app_id = "";
@@ -56,6 +56,7 @@ float adc;
 long startTime;
 String espIp;
 String apSsid;
+String apPass;
 int rssi;
 String ssid;
 
@@ -71,6 +72,8 @@ int bluePin = 16;
 int red = 1024;
 int green = 1024;
 int blue = 500;
+
+String sensorData = "";
 
 // LCD
 // LiquidCrystal_PCF8574 lcd(0x3F);
@@ -90,6 +93,8 @@ int timeOut = 5000;
 // mqtt config
 char mqttAddress[200] = "";
 int mqttPort = 1883;
+char mqttUser[20] = "";
+char mqttPassword[20] = "";
 char mqttPublishTopic[200] = "iot/sensor";
 char mqttSuscribeTopic[200] = "iot/sensor";
 
@@ -163,6 +168,7 @@ void setup() { //------------------------------------------------
   readFS();
 
   apSsid = "Config_" + app_id;
+  apPass = "esp1234";
 
   pinMode(RELEY, OUTPUT);
   pinMode(BUILTINLED, OUTPUT);
@@ -278,11 +284,12 @@ void loop() {
   }
 
   yield();
-  String sensorData = "";
+  sensorData = "";
 
   // DHT
   if (humd != NULL && temp != NULL)
     sensorData = "\"temp\":" + String(temp) + ", \"hum\":" + String(humd);
+
 
   // RFID
   readRFID(sensorData);
@@ -473,6 +480,9 @@ void createWebServer() {
       root["status"] = "off";
       digitalWrite(BUILTINLED, HIGH);
     }
+
+    root["data"] = sensorData;
+
     JsonObject &meta = root.createNestedObject("meta");
     meta["version"] = FIRM_VER;
     meta["sensor"] = SENSOR;
@@ -566,7 +576,7 @@ void createWebServer() {
     JsonObject &root = jsonBuffer.createObject();
 
     root["ssid"] = essid;
-    root["password"] = epwd;
+    root["password"] = "*******";
 
     root["timeOut"] = timeOut;
     root["relleyPin"] = RELEY;
@@ -577,6 +587,9 @@ void createWebServer() {
 
     root["mqttAddress"] = mqttAddress;
     root["mqttPort"] = mqttPort;
+    root["mqttUser"] = mqttUser;
+    root["mqttPassword"] = "******";
+
     root["mqttPublishTopic"] = mqttPublishTopic;
     root["mqttSuscribeTopic"] = mqttSuscribeTopic;
 
@@ -622,6 +635,11 @@ void createWebServer() {
     mqttAddress1.toCharArray(mqttAddress, 200, 0);
     String mqttPort1 = root["mqttPort"];
     mqttPort = mqttPort1.toInt();
+    String mqttUser1 = root["mqttUser"].asString();
+    mqttUser1.toCharArray(mqttUser, 20, 0);
+    String mqttPassword1 = root["mqttPassword"].asString();
+    mqttPassword1.toCharArray(mqttPassword, 20, 0);
+
     String mqttPubTopic1 = root["mqttPublishTopic"].asString();
     mqttPubTopic1.toCharArray(mqttPublishTopic, 200, 0);
     String mqttSusTopic1 = root["mqttSuscribeTopic"].asString();
@@ -995,7 +1013,7 @@ bool mqReconnect() {
 
     yield();
     // Attempt to connect
-    if (mqClient.connect(app_id.c_str())) {
+    if (mqClient.connect(app_id.c_str(), mqttUser, mqttPassword)) {
       yield();
       Serial.print(F("\nconnected with cid: "));
       Serial.println(app_id);
@@ -1093,7 +1111,7 @@ void setupAP(void) {
   Serial.println("");
   delay(100);
 
-  WiFi.softAP(apSsid.c_str());
+  WiFi.softAP(apSsid.c_str(), apPass.c_str());
   Serial.print(F("SoftAP ready. AP SID: "));
   Serial.print(apSsid);
 
@@ -1152,6 +1170,12 @@ void readFS() {
           mqttAddress1.toCharArray(mqttAddress, 200, 0);
           String mqttPort1 = jsonConfig["mqttPort"];
           mqttPort = mqttPort1.toInt();
+
+          String mqttUser1 = jsonConfig["mqttUser"].asString();
+          mqttUser1.toCharArray(mqttUser, 20, 0);
+          String mqttPassword1 = jsonConfig["mqttPassword"].asString();
+          mqttPassword1.toCharArray(mqttPassword, 20, 0);
+
           String mqttPubTopic1 = jsonConfig["mqttPublishTopic"].asString();
           mqttPubTopic1.toCharArray(mqttPublishTopic, 200, 0);
           String mqttSusTopic1 = jsonConfig["mqttSuscribeTopic"].asString();
