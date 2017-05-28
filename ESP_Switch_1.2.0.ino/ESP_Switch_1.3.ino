@@ -48,7 +48,7 @@ ADC_MODE(ADC_VCC);
 int lightTreshold = 50; // 0 - dark, >100 - light
 
 // APP
-String FIRM_VER = "1.5.1";
+String FIRM_VER = "1.5.2";
 String SENSOR = "RC522, DHT22"; // BMP180, HTU21, DHT11
 
 String app_id = "";
@@ -126,6 +126,9 @@ DHT dht(DHTPIN, DHTTYPE);
 #define SS_PIN 4
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
+//MDNS
+String mdns = "";
+
 void setup() { //------------------------------------------------
   Serial.begin(115200);
   Serial.println("Setup ...");
@@ -188,11 +191,12 @@ void setup() { //------------------------------------------------
   else {
     if (!MDNS.begin(app_id.c_str())) {
       Serial.println("Error setting up MDNS responder!");
-
+      mdns = "error";
     } else {
       Serial.println("mDNS responder started");
       // Add service to MDNS-SD
       MDNS.addService("http", "tcp", 80);
+      mdns = app_id.c_str();
     }
   }
 
@@ -492,6 +496,7 @@ void createWebServer() {
 
     meta["ssid"] = essid;
     meta["rssi"] = rssi;
+    meta["mdns"] =  mdns;
     meta["freeHeap"] = ESP.getFreeHeap();
     meta["upTimeSec"] = (millis() - startTime) / 1000;
 
